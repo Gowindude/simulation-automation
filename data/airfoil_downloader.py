@@ -183,3 +183,43 @@ def load_dat_file(filepath: str) -> tuple[str, list[tuple[float, float]]]:
 
     return name, coords
 
+
+# ─── CLI entrypoint ─────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Download and/or load UIUC airfoil .dat files."
+    )
+    parser.add_argument(
+        "--source",
+        choices=["database", "selig"],
+        default="selig",
+        # We default to "selig" because those files are already in a
+        # standardised format that doesn't need extra parsing heuristics.
+        help="Which UIUC directory to scrape (default: selig).",
+    )
+    parser.add_argument(
+        "--save-dir",
+        default="data/raw/airfoils",
+        help="Folder to save .dat files into (default: data/raw/airfoils).",
+    )
+    parser.add_argument(
+        "--test-load",
+        action="store_true",
+        # Quick sanity check: after downloading, load the first .dat file
+        # and print its name + first 5 coordinate pairs to verify parsing.
+        help="After downloading, test-load the first file and print its coords.",
+    )
+    args = parser.parse_args()
+
+    # Download all .dat files from the chosen source.
+    saved = download_airfoils(source=args.source, save_dir=args.save_dir)
+
+    # Optionally verify the parser works on a real file.
+    if args.test_load and saved:
+        name, coords = load_dat_file(saved[0])
+        print(f"\nTest load of '{saved[0]}':")
+        print(f"  Airfoil name : {name}")
+        print(f"  Total points : {len(coords)}")
+        print(f"  First 5 pts  : {coords[:5]}")
