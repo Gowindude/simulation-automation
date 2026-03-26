@@ -60,3 +60,31 @@ class FluidistAgent:
                 writer.writerows(coords)
             print(f"No mesh found. Coordinates written to '{coords_path}' for mesher.")
 
+    def set_boundary_conditions(self, inlet_velocity: float = 50.0):
+        """
+        Configure the physics: set the turbulence model, working fluid, and inlet velocity.
+
+        Args:
+            inlet_velocity (float): Freestream velocity at the inlet in m/s (SI). Default 50 m/s.
+        """
+        # ---- Turbulence Model ----
+        # k-omega SST (Shear Stress Transport) blends k-omega near the wall and k-epsilon
+        # in the freestream. This makes it much better at capturing the flow separation
+        # that happens on the airfoil's suction side and near the trailing edge — exactly
+        # the regions that drive surface pressure errors.
+        self.solver.setup.models.viscous.model = "k-omega-sst"
+        print("Turbulence model set to k-omega SST.")
+
+        # ---- Working Fluid ----
+        # Air at sea-level ISA conditions. Density and viscosity are already set
+        # by default in Fluent's material library, so we just need to reference it.
+        self.solver.setup.materials.fluid["air"]  # ensures air is the active fluid
+
+        # ---- Inlet Boundary Condition ----
+        # "velocity-inlet" named zone. The zone name "inlet" must match what is
+        # defined in the mesh — if you rename it in the mesher, update here too.
+        inlet = self.solver.setup.boundary_conditions.velocity_inlet["inlet"]
+        # Set the magnitude — value comes in as m/s (SI), Fluent expects m/s by default.
+        inlet.momentum.velocity_magnitude.value = inlet_velocity
+        print(f"Velocity inlet set to {inlet_velocity} m/s (SI).")
+
