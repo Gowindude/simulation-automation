@@ -30,3 +30,33 @@ class FluidistAgent:
         )
 
         print("Fluent launched successfully.")
+
+    def generate_or_load_mesh(self, coords: list, mesh_path: str = "airfoil_2d.msh"):
+        """
+        Check if a mesh file already exists and load it; otherwise write geometry
+        coordinates to a temp file for the mesher to use later.
+
+        Args:
+            coords (list of tuple): [(x1, y1), ...] in Meters (SI).
+            mesh_path (str): Path to an existing .msh case file.
+        """
+        # Store coords for reference — these are the raw (x,y) defining the airfoil profile.
+        # All values are in Meters as per SI convention.
+        self.coords = coords
+
+        if os.path.exists(mesh_path):
+            # If a mesh was already generated (e.g. from a previous run), skip re-meshing.
+            # Re-meshing is expensive, so we reuse it when nothing has changed geometrically.
+            print(f"Existing mesh found at '{mesh_path}'. Loading...")
+            self.solver.file.read(file_type="case", file_name=mesh_path)
+        else:
+            # No mesh on disk — write the coordinates out to a CSV so the mesher
+            # can pick them up. In a full workflow this feeds into Fluent Meshing
+            # or SpaceClaim via a journal file.
+            coords_path = os.path.splitext(mesh_path)[0] + "_coords.csv"
+            with open(coords_path, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["x_m", "y_m"])   # header — units are Meters
+                writer.writerows(coords)
+            print(f"No mesh found. Coordinates written to '{coords_path}' for mesher.")
+
