@@ -108,3 +108,42 @@ class FluidistAgent:
         self.solver.solution.run_calculation.iterate(iter_count=iterations)
         print(f"Solver finished after up to {iterations} iterations.")
 
+    def export_pressure_csv(self, output_path: str = "data/raw/pressure_dist.csv"):
+        """
+        Export the static pressure on the airfoil wall surface to a CSV file.
+        This CSV becomes the handoff to the Structuralist FEA tool.
+
+        Args:
+            output_path (str): Destination path for the pressure CSV (SI: Pascals).
+        """
+        # Make sure the output directory exists before we try to write to it.
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        # We export from the zone named "airfoil" (the wall boundary in the mesh).
+        # The quantity "pressure" in Fluent is gauge pressure in Pascals — exactly
+        # what MAPDL expects as a distributed load later.
+        self.solver.results.report.surface_integrals.export(
+            report_type="facet-values",    # write the value at every face centroid
+            surface_ids=["airfoil"],       # zone name must match the mesh definition
+            expression="pressure",         # static gauge pressure [Pa]
+            file_name=output_path,
+        )
+        print(f"Surface pressure exported to '{output_path}' (SI: Pascals).")
+
+    def close(self):
+        """Cleanly shut down the Fluent solver session to free up the license."""
+        self.solver.exit()
+        print("Fluent session closed.")
+
+
+# ─── Quick smoke-test when run directly ─────────────────────────────────────
+if __name__ == "__main__":
+    # Example NACA 0012-ish coords in Meters — just four points for a stub test.
+    sample_coords = [(0.0, 0.0), (0.5, 0.08), (1.0, 0.0), (0.5, -0.08)]
+
+    agent = FluidistAgent(show_gui=False)
+    agent.generate_or_load_mesh(sample_coords)
+    agent.set_boundary_conditions(inlet_velocity=50.0)  # 50 m/s freestream — typical wind-tunnel AoA test
+    agent.run_simulation(iterations=300)
+    agent.export_pressure_csv()
+    agent.close()
