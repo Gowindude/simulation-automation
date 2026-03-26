@@ -81,3 +81,55 @@ def scrape_dat_links(source: str = "selig") -> list[str]:
             urls.append(base_url + href)      # relative → absolute
     return urls
 
+
+def download_airfoils(
+    source: str = "selig",
+    save_dir: str = "data/raw/airfoils",
+) -> list[str]:
+    """
+    Download every .dat airfoil coordinate file from the UIUC database.
+
+    The original scripts used urllib.request.urlretrieve in a tight loop.
+    We swap to requests.get because it gives us better error handling,
+    timeout control, and doesn't silently swallow HTTP errors.
+
+    Args:
+        source:   "database" or "selig" — which UIUC index to scrape.
+        save_dir: Local folder to save the .dat files into.
+
+    Returns:
+        List of local file paths that were saved.
+    """
+    # Create the output directory if it doesn't exist yet.
+    os.makedirs(save_dir, exist_ok=True)
+
+    # Step 1 — get the list of .dat URLs from the HTML page.
+    urls = scrape_dat_links(source=source)
+    print(f"Found {len(urls)} airfoil .dat files from '{source}' source.")
+
+    saved_files = []
+    for i, url in enumerate(urls, start=1):
+        # Extract the filename from the URL (e.g. "naca0012.dat").
+        filename = url.rsplit("/", 1)[-1]
+        filepath = os.path.join(save_dir, filename)
+
+        try:
+            # Stream the download to avoid loading huge files into memory
+            # (these .dat files are tiny, but good practice regardless).
+            resp = requests.get(url, timeout=15)
+            resp.raise_for_status()
+
+            with open(filepath, "wb") as f:
+                f.write(resp.content)
+
+            saved_files.append(filepath)
+            print(f"  [{i}/{len(urls)}] Saved {filename}")
+
+        except requests.RequestException as e:
+            # Don't crash the whole batch if one file is unavailable —
+            # just warn and keep going with the rest.
+            print(f"  [{i}/{len(urls)}] FAILED {filename}: {e}")
+
+    print(f"Download complete. {len(saved_files)}/{len(urls)} files saved to '{save_dir}'.")
+    return saved_files
+
