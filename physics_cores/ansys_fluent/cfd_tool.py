@@ -88,3 +88,23 @@ class FluidistAgent:
         inlet.momentum.velocity_magnitude.value = inlet_velocity
         print(f"Velocity inlet set to {inlet_velocity} m/s (SI).")
 
+    def run_simulation(self, iterations: int = 300):
+        """
+        Initialise the flow field and iterate the solver until convergence.
+
+        Args:
+            iterations (int): Maximum number of solver iterations.
+                              300 is usually enough for a well-posed 2D RANS case
+                              to reach residuals below 1e-5.
+        """
+        # Hybrid initialisation seeds the velocity and pressure fields with a
+        # Laplace equation solve — it converges faster than a simple zero-field start.
+        self.solver.solution.initialization.hybrid_initialize()
+        print("Flow field initialised with hybrid method.")
+
+        # Run the coupled pressure-velocity solver for up to `iterations` steps.
+        # The solver will write residuals to the console; watch them drop below 1e-4
+        # to confirm the solution is converging properly.
+        self.solver.solution.run_calculation.iterate(iter_count=iterations)
+        print(f"Solver finished after up to {iterations} iterations.")
+
