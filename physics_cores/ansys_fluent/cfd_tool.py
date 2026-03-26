@@ -1,9 +1,22 @@
 """
 Fluidist Tool (CFD) for Aero-Structural Optimization System
+
+Provides capabilities for 2D aerodynamic analysis of airfoil profiles
+using Ansys Fluent via the PyFluent API (ansys-fluent-core).
+
+Prerequisites:
+    - A licensed copy of Ansys Fluent installed locally.
+    - The AWP_ROOT<ver> environment variable must point to the Ansys installation
+      (e.g. AWP_ROOT252 -> C:\\Program Files\\ANSYS Inc\\v252).
+      On Windows this is set automatically by the Ansys installer.
+    - pip install ansys-fluent-core
 """
+
 import os
 import csv
 import ansys.fluent.core as pyfluent
+from ansys.fluent.core import ScalarFieldDataRequest, SurfaceDataType, SurfaceFieldDataRequest
+
 
 class FluidistAgent:
     """Agent responsible for running 2D aerodynamic analysis via Ansys Fluent."""
@@ -21,14 +34,23 @@ class FluidistAgent:
         # We use 2D double-precision ("2ddp") because airfoil boundary layers have
         # very thin, high-gradient regions where single-precision floating point
         # would accumulate error and give us garbage pressure readings.
+        #
+        # mode: FluentMode.SOLVER launches directly in solver mode (default).
+        #       Use FluentMode.MESHING if you need to generate the mesh from scratch.
+        # dimension: Dimension.TWO restricts to a 2D plane — our airfoil cross-section.
+        # precision: Precision.DOUBLE for 64-bit floats (critical for BL resolution).
+        # processor_count: parallelise across 4 CPU cores to speed up the solve.
+        # ui_mode: controls whether the Fluent GUI window opens or runs headless.
         self.solver = pyfluent.launch_fluent(
-            precision="double",     # double precision float for accuracy in thin BL regions
-            processor_count=4,      # parallelise across 4 CPU cores to speed up the solve
-            mode="solver",          # we want the solver, not the mesher
-            version="2d",           # 2D planar mode — our airfoil cross-section lives in a plane
-            show_gui=show_gui,
+            mode=pyfluent.FluentMode.SOLVER,
+            dimension=pyfluent.Dimension.TWO,
+            precision=pyfluent.Precision.DOUBLE,
+            processor_count=4,
+            ui_mode=pyfluent.UIMode.GUI if show_gui else pyfluent.UIMode.NO_GUI,
         )
 
+        # Quick health check — raises if gRPC connection to Fluent is broken.
+        assert self.solver.health_check.is_serving, "Fluent session is not healthy!"
         print("Fluent launched successfully.")
 
     def generate_or_load_mesh(self, coords: list, mesh_path: str = "airfoil_2d.msh"):
@@ -48,7 +70,8 @@ class FluidistAgent:
             # If a mesh was already generated (e.g. from a previous run), skip re-meshing.
             # Re-meshing is expensive, so we reuse it when nothing has changed geometrically.
             print(f"Existing mesh found at '{mesh_path}'. Loading...")
-            self.solver.file.read(file_type="case", file_name=mesh_path)
+            # settings.file.read_case loads only the mesh + setup (no solution data).
+            self.solver.settings.file.read_case(file_name=mesh_path)
         else:
             # No mesh on disk — write the coordinates out to a CSV so the mesher
             # can pick them up. In a full workflow this feeds into Fluent Meshing
@@ -67,23 +90,30 @@ class FluidistAgent:
         Args:
             inlet_velocity (float): Freestream velocity at the inlet in m/s (SI). Default 50 m/s.
         """
+        # All solver settings are accessed through solver.settings.setup / .solution.
+        setup = self.solver.settings.setup
+
         # ---- Turbulence Model ----
         # k-omega SST (Shear Stress Transport) blends k-omega near the wall and k-epsilon
         # in the freestream. This makes it much better at capturing the flow separation
         # that happens on the airfoil's suction side and near the trailing edge — exactly
         # the regions that drive surface pressure errors.
-        self.solver.setup.models.viscous.model = "k-omega-sst"
+        # In PyFluent the model is set in two steps: first select k-omega family,
+        # then pick the SST variant specifically.
+        viscous = setup.models.viscous
+        viscous.model = "k-omega"
+        viscous.k_omega_model = "sst"
         print("Turbulence model set to k-omega SST.")
 
         # ---- Working Fluid ----
         # Air at sea-level ISA conditions. Density and viscosity are already set
-        # by default in Fluent's material library, so we just need to reference it.
-        self.solver.setup.materials.fluid["air"]  # ensures air is the active fluid
+        # by default in Fluent's material library, so we just reference it.
+        setup.materials.fluid["air"]  # ensures air is the active fluid
 
         # ---- Inlet Boundary Condition ----
         # "velocity-inlet" named zone. The zone name "inlet" must match what is
         # defined in the mesh — if you rename it in the mesher, update here too.
-        inlet = self.solver.setup.boundary_conditions.velocity_inlet["inlet"]
+        inlet = setup.boundary_conditions.velocity_inlet["inlet"]
         # Set the magnitude — value comes in as m/s (SI), Fluent expects m/s by default.
         inlet.momentum.velocity_magnitude.value = inlet_velocity
         print(f"Velocity inlet set to {inlet_velocity} m/s (SI).")
@@ -97,15 +127,17 @@ class FluidistAgent:
                               300 is usually enough for a well-posed 2D RANS case
                               to reach residuals below 1e-5.
         """
+        solution = self.solver.settings.solution
+
         # Hybrid initialisation seeds the velocity and pressure fields with a
         # Laplace equation solve — it converges faster than a simple zero-field start.
-        self.solver.solution.initialization.hybrid_initialize()
+        solution.initialization.hybrid_initialize()
         print("Flow field initialised with hybrid method.")
 
         # Run the coupled pressure-velocity solver for up to `iterations` steps.
         # The solver will write residuals to the console; watch them drop below 1e-4
         # to confirm the solution is converging properly.
-        self.solver.solution.run_calculation.iterate(iter_count=iterations)
+        solution.run_calculation.iterate(iter_count=iterations)
         print(f"Solver finished after up to {iterations} iterations.")
 
     def export_pressure_csv(self, output_path: str = "data/raw/pressure_dist.csv"):
@@ -113,22 +145,47 @@ class FluidistAgent:
         Export the static pressure on the airfoil wall surface to a CSV file.
         This CSV becomes the handoff to the Structuralist FEA tool.
 
+        Uses the fields.field_data API to pull (x, y) face centroids and
+        corresponding static pressure values from the "airfoil" wall zone.
+
         Args:
             output_path (str): Destination path for the pressure CSV (SI: Pascals).
         """
         # Make sure the output directory exists before we try to write to it.
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-        # We export from the zone named "airfoil" (the wall boundary in the mesh).
-        # The quantity "pressure" in Fluent is gauge pressure in Pascals — exactly
-        # what MAPDL expects as a distributed load later.
-        self.solver.results.report.surface_integrals.export(
-            report_type="facet-values",    # write the value at every face centroid
-            surface_ids=["airfoil"],       # zone name must match the mesh definition
-            expression="pressure",         # static gauge pressure [Pa]
-            file_name=output_path,
+        field_data = self.solver.fields.field_data
+
+        # Step 1 — Get the (x, y) centroids of every face on the airfoil wall.
+        # We need these so the FEA tool knows WHERE each pressure value acts.
+        centroid_request = SurfaceFieldDataRequest(
+            surfaces=["airfoil"],
+            data_types=[SurfaceDataType.FacesCentroid],
         )
+        centroid_data = field_data.get_field_data(centroid_request)
+        # centroids is an Nx3 array (x, y, z) — for 2D, z is always 0.
+        centroids = centroid_data["airfoil"].face_centroids
+
+        # Step 2 — Get the static (gauge) pressure at each face centroid [Pa].
+        # "static-pressure" is the Fluent field name for gauge pressure.
+        pressure_request = ScalarFieldDataRequest(
+            field_name="static-pressure",
+            surfaces=["airfoil"],
+        )
+        pressure_data = field_data.get_field_data(pressure_request)
+        pressures = pressure_data["airfoil"]  # 1D array of pressure values
+
+        # Step 3 — Write to CSV: columns are x_m, y_m, pressure_Pa (all SI).
+        with open(output_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["x_m", "y_m", "pressure_Pa"])
+            for i, p in enumerate(pressures):
+                x = float(centroids[i][0])
+                y = float(centroids[i][1])
+                writer.writerow([x, y, float(p)])
+
         print(f"Surface pressure exported to '{output_path}' (SI: Pascals).")
+        print(f"  → {len(pressures)} data points written.")
 
     def close(self):
         """Cleanly shut down the Fluent solver session to free up the license."""
@@ -139,11 +196,12 @@ class FluidistAgent:
 # ─── Quick smoke-test when run directly ─────────────────────────────────────
 if __name__ == "__main__":
     # Example NACA 0012-ish coords in Meters — just four points for a stub test.
+    # In reality you would pass hundreds of profile points.
     sample_coords = [(0.0, 0.0), (0.5, 0.08), (1.0, 0.0), (0.5, -0.08)]
 
     agent = FluidistAgent(show_gui=False)
     agent.generate_or_load_mesh(sample_coords)
-    agent.set_boundary_conditions(inlet_velocity=50.0)  # 50 m/s freestream — typical wind-tunnel AoA test
+    agent.set_boundary_conditions(inlet_velocity=50.0)  # 50 m/s freestream
     agent.run_simulation(iterations=300)
     agent.export_pressure_csv()
     agent.close()
