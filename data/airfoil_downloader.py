@@ -133,3 +133,53 @@ def download_airfoils(
     print(f"Download complete. {len(saved_files)}/{len(urls)} files saved to '{save_dir}'.")
     return saved_files
 
+
+def load_dat_file(filepath: str) -> tuple[str, list[tuple[float, float]]]:
+    """
+    Parse a single UIUC .dat airfoil coordinate file and return (name, coords).
+
+    The Selig format looks like this:
+        NACA 0012
+        1.000000  0.001260
+        0.999416  0.001476
+        ...
+    Line 1 is the airfoil name. Every subsequent line that contains exactly
+    two floats is an (x, y) coordinate point. We skip any blank lines or
+    lines with non-numeric content (some files have extra header rows with
+    the number of points).
+
+    Coordinates are normalised to a chord of 1.0 in the .dat files. To get
+    Meters for the CFD tool, multiply by your desired chord length.
+
+    Args:
+        filepath: Path to the .dat file on disk.
+
+    Returns:
+        (name, coords): airfoil name string and list of (x, y) tuples.
+    """
+    coords = []
+    name = ""
+
+    with open(filepath, "r") as f:
+        lines = f.readlines()
+
+    if not lines:
+        raise ValueError(f"Empty .dat file: {filepath}")
+
+    # First non-blank line is always the airfoil name / identifier.
+    name = lines[0].strip()
+
+    for line in lines[1:]:
+        parts = line.strip().split()
+        if len(parts) == 2:
+            try:
+                # Each coordinate pair is (x/c, y/c) — normalised by chord.
+                x, y = float(parts[0]), float(parts[1])
+                coords.append((x, y))
+            except ValueError:
+                # Skip lines that look like two columns but aren't numbers
+                # (e.g. some files have a "33  33" point-count header).
+                continue
+
+    return name, coords
+
