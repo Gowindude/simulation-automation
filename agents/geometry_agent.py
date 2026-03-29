@@ -301,41 +301,39 @@ class GeometryAgent:
         self, airfoil: np.ndarray, domain: dict[str, np.ndarray], path: str
     ):
         """
-        Write a minimal DXF file containing the airfoil and domain boundaries.
+        Write a standard-compliant DXF file using ezdxf.
 
-        DXF is a text-based CAD exchange format that Fluent Meshing can import
-        directly. We write it by hand (no external libs) because we only need
-        LWPOLYLINE entities — the simplest DXF entity type.
-
-        Each boundary (airfoil, inlet, top, bottom, outlet) is written as a
-        separate polyline on its own layer so the mesher can assign boundary
-        types by layer name.
+        Fluent Meshing's CAD importer is strict and rejected our hand-crafted
+        minimal DXF. We now use ezdxf to ensure a proper header and entity
+        structure the Ansys importer will accept.
         """
-        def write_polyline(f, points: np.ndarray, layer: str, closed: bool = False):
-            """Write a single LWPOLYLINE entity to the DXF file."""
-            f.write("0\nLWPOLYLINE\n")
-            f.write(f"8\n{layer}\n")          # layer name → becomes zone name
-            f.write(f"90\n{len(points)}\n")   # number of vertices
-            f.write(f"70\n{1 if closed else 0}\n")  # 1 = closed polyline
-            for pt in points:
-                f.write(f"10\n{pt[0]:.8f}\n")  # X coordinate
-                f.write(f"20\n{pt[1]:.8f}\n")  # Y coordinate
+        try:
+            import ezdxf
+        except ImportError:
+            self.logger.error("  ezdxf not installed. Cannot export DXF. Run: pip install ezdxf")
+            raise
 
-        with open(path, "w") as f:
-            # DXF header — minimal required sections.
-            f.write("0\nSECTION\n2\nENTITIES\n")
+        # Create a new DXF document (R2010 is widely compatible with modern CAD importers).
+        doc = ezdxf.new("R2010")
+        msp = doc.modelspace()
 
-            # Airfoil polyline — closed loop.
-            write_polyline(f, airfoil, layer="airfoil", closed=True)
+        # Helper to add a 2D polyline (LWPOLYLINE) to a specific layer.
+        def add_polyline(points, layer_name, closed=False):
+            if layer_name not in doc.layers:
+                doc.layers.add(name=layer_name)
+            # Ensure shape is just (x, y) tuples.
+            pts_2d = [(pt[0], pt[1]) for pt in points]
+            msp.add_lwpolyline(pts_2d, format="xy", dxfattribs={"layer": layer_name}, close=closed)
 
-            # Domain boundaries — each on its own named layer.
-            for name, pts in domain.items():
-                write_polyline(f, pts, layer=name, closed=False)
+        # Build airfoil layer (closed loop)
+        add_polyline(airfoil, layer_name="airfoil", closed=True)
 
-            # End of entities section and file.
-            f.write("0\nENDSEC\n0\nEOF\n")
+        # Build domain boundaries
+        for name, pts in domain.items():
+            add_polyline(pts, layer_name=name, closed=False)
 
-        self.logger.info(f"  DXF written to: {path}")
+        doc.saveas(path)
+        self.logger.info(f"  DXF (ezdxf) written to: {path}")
 
     def _write_csv(self, coords: np.ndarray, path: str):
         """
@@ -394,10 +392,12 @@ class GeometryAgent:
         lower_cs = self._apply_cosine_spacing(lower, n_points)
         self.logger.info(f"  After : upper={len(upper_cs)} pts, lower={len(lower_cs)} pts")
 
-        # Combine back into a single closed loop: upper (LE→TE) then
-        # lower reversed (TE→LE), so we get a clockwise closed polygon.
-        # Skip the duplicate LE point at the junction.
-        airfoil_combined = np.vstack([upper_cs, lower_cs[1:]]) * self.chord_m
+        # Combine back into a single closed loop:
+        # upper_cs goes LE → TE. So upper_cs[::-1] goes TE → LE.
+        # lower_cs goes LE → TE. 
+        # So we stack TE(up) → LE ... LE → TE(low) to make a continuous clockwise loop.
+        # Skip the duplicate LE point at the junction (lower_cs[1:]).
+        airfoil_combined = np.vstack([upper_cs[::-1], lower_cs[1:]]) * self.chord_m
         self.logger.info(f"  Combined airfoil: {len(airfoil_combined)} points "
                          f"(scaled to {self.chord_m} m chord)")
 
