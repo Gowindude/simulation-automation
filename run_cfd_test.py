@@ -2,25 +2,30 @@
 End-to-End CFD Integration Test
 
 Runs the full pipeline:
-  1. Generate a 2D mesh (NACA0012 via PyFluent meshing)
-  2. Launch the Fluent solver
-  3. Set boundary conditions (50 m/s inlet, k-omega SST)
-  4. Run the simulation
-  5. Export pressure_dist.csv
-  6. Validate the output
+  1. Download a raw .dat airfoil (NACA 0012-34)
+  2. Geometry Agent: clean .dat, apply cosine spacing, export DXF & CSV
+  3. Launch the Fluent solver
+  4. Generate a 2D mesh using the DXF via PyFluent meshing & load it
+  5. Set boundary conditions (50 m/s inlet, k-omega SST)
+  6. Run the simulation
+  7. Export pressure_dist.csv
+  8. Validate the output
 
 Prerequisites:
     - Licensed Ansys Fluent installation with AWP_ROOT<ver> set
-    - pip install ansys-fluent-core
+    - pip install ansys-fluent-core numpy scipy requests
 """
 
 import os
 import csv
 import sys
+import requests
 
 # Add project root to path so we can import our modules.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from data.airfoil_downloader import load_dat_file
+from agents.geometry_agent import GeometryAgent
 from physics_cores.ansys_fluent.cfd_tool import FluidistAgent
 
 
@@ -35,14 +40,11 @@ def validate_pressure_csv(csv_path: str) -> bool:
 
     with open(csv_path, "r") as f:
         reader = csv.DictReader(f)
-
-        # Check header columns.
         expected = {"x_m", "y_m", "pressure_Pa"}
         if not expected.issubset(set(reader.fieldnames or [])):
             print(f"  FAIL: Expected columns {expected}, got {reader.fieldnames}")
             return False
 
-        # Check at least one data row with numeric values.
         rows = list(reader)
         if len(rows) == 0:
             print("  FAIL: CSV has headers but no data rows.")
@@ -60,47 +62,69 @@ def validate_pressure_csv(csv_path: str) -> bool:
     return True
 
 
+def download_test_airfoil(output_dir: str) -> str:
+    """Download a raw .dat file from UIUC for testing."""
+    os.makedirs(output_dir, exist_ok=True)
+    url = "https://m-selig.ae.illinois.edu/ads/coord_seligFmt/naca001234.dat"
+    path = os.path.join(output_dir, "naca001234.dat")
+    if not os.path.exists(path):
+        r = requests.get(url, timeout=15)
+        with open(path, "wb") as f:
+            f.write(r.content)
+    return path
+
+
 def main():
     """Run the full CFD pipeline and report pass/fail for each step."""
-    output_csv = "data/raw/pressure_dist.csv"
+    output_dir = "data/raw"
+    output_csv = os.path.join(output_dir, "pressure_dist.csv")
     mesh_path = "airfoil_2d.msh.h5"
 
     print("=" * 60)
     print("  CFD Integration Test — Full Pipeline")
     print("=" * 60)
 
-    # ── Step 1: Launch solver + generate/load mesh ─────────────────────────
-    # FluidistAgent launches Fluent in solver mode. generate_or_load_mesh
-    # will detect that no .msh.h5 exists and trigger mesh_airfoil.py to
-    # generate one using the NACA0012 example geometry from PyFluent.
-    print("\n[1/5] Launching Fluent solver...")
-    agent = FluidistAgent(show_gui=False)
+    # ── Step 1: Download & Preprocess (Geometry Agent) ─────────────────────
+    print("\n[1/6] Downloading & preprocessing airfoil geometry...")
+    dat_path = download_test_airfoil(output_dir)
+    geo_agent = GeometryAgent(dat_path=dat_path, chord_m=1.0, output_dir=output_dir)
+    geo_result = geo_agent.process(n_points=150)
+    print(f"  PASS: Geometry Agent generated DXF at {geo_result['dxf_path']}")
+
+    # Load the cleaned coords from the CSV to pass to the FluidistAgent
+    # (used for reference, e.g., structural mapping later)
+    _, cleaned_coords = load_dat_file(dat_path)  # Just dummy loading here to test the API
+
+    # ── Step 2: Launch solver ──────────────────────────────────────────────
+    print("\n[2/6] Launching Fluent solver...")
+    fluidist = FluidistAgent(show_gui=False)
     print("  PASS: Fluent solver launched.")
 
-    print("\n[2/5] Generating/loading mesh...")
-    # Pass dummy coords — in the current workflow the actual geometry comes
-    # from the .fmd file, not from these coordinates. These are stored for
-    # reference only (e.g. for later structural mapping).
-    sample_coords = [(0.0, 0.0), (0.5, 0.06), (1.0, 0.0)]
-    agent.generate_or_load_mesh(sample_coords, mesh_path=mesh_path)
+    # ── Step 3: Mesh & Load ────────────────────────────────────────────────
+    print("\n[3/6] Generating/loading mesh from DXF...")
+    fluidist.generate_or_load_mesh(
+        coords=cleaned_coords,
+        dxf_file=geo_result["dxf_path"],
+        mesh_path=mesh_path,
+    )
     print("  PASS: Mesh loaded into solver.")
 
-    # ── Step 2: Set boundary conditions ────────────────────────────────────
-    print("\n[3/5] Setting boundary conditions (50 m/s, k-omega SST)...")
-    agent.set_boundary_conditions(inlet_velocity=50.0)
+    # ── Step 4: Set boundary conditions ────────────────────────────────────
+    print("\n[4/6] Setting boundary conditions (50 m/s, k-omega SST)...")
+    fluidist.set_boundary_conditions(inlet_velocity=50.0)
     print("  PASS: Boundary conditions set.")
 
-    # ── Step 3: Run the simulation ─────────────────────────────────────────
-    print("\n[4/5] Running simulation (300 iterations)...")
-    agent.run_simulation(iterations=300)
+    # ── Step 5: Run the simulation ─────────────────────────────────────────
+    print("\n[5/6] Running simulation (300 iterations)...")
+    fluidist.run_simulation(iterations=300)
     print("  PASS: Simulation complete.")
 
-    # ── Step 4: Export pressure CSV ────────────────────────────────────────
-    print("\n[5/5] Exporting pressure distribution...")
-    agent.export_pressure_csv(output_path=output_csv)
+    # ── Step 6: Export pressure CSV ────────────────────────────────────────
+    print("\n[6/6] Exporting pressure distribution...")
+    fluidist.export_pressure_csv(output_path=output_csv)
 
-    # ── Step 5: Clean up ───────────────────────────────────────────────────
-    agent.close()
+    # ── Clean up ───────────────────────────────────────────────────────────
+    fluidist.close()
 
     # ── Validation ─────────────────────────────────────────────────────────
     print("\n" + "=" * 60)
@@ -108,7 +132,6 @@ def main():
     print("=" * 60)
     passed = validate_pressure_csv(output_csv)
 
-    print("\n" + "=" * 60)
     if passed:
         print("  ✅ ALL TESTS PASSED")
     else:
@@ -120,3 +143,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
