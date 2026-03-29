@@ -352,3 +352,122 @@ class GeometryAgent:
                 writer.writerow([f"{pt[0]:.8f}", f"{pt[1]:.8f}"])
         self.logger.info(f"  CSV written to: {path} ({len(coords)} points)")
 
+    # ── Public interface ────────────────────────────────────────────────────
+
+    def process(self, n_points: int = 150) -> dict:
+        """
+        Run the full autonomous preprocessing pipeline.
+
+        This is the agent's main entry point. It chains all decisions together:
+        analyse → split → treat TE → cosine resample → build domain → export.
+
+        Every decision is logged to the processing log file so a human can
+        review the agent's reasoning after the fact.
+
+        Args:
+            n_points: Number of cosine-spaced points per surface (default 150).
+
+        Returns:
+            Dict with paths to all generated output files.
+        """
+        self.logger.info("=" * 60)
+        self.logger.info("  GEOMETRY AGENT — Starting autonomous processing")
+        self.logger.info("=" * 60)
+
+        # ── Phase 1: Trailing edge analysis ────────────────────────────────
+        te_result = self._analyze_trailing_edge()
+
+        # ── Phase 2: Split into upper/lower surfaces ──────────────────────
+        self.logger.info("─── Surface Splitting ───")
+        upper, lower = self._split_surfaces(self.raw_coords.copy())
+
+        # ── Phase 3: Apply TE treatment ───────────────────────────────────
+        self.logger.info("─── Trailing Edge Treatment ───")
+        upper, lower = self._treat_trailing_edge(upper, lower, te_result["treatment"])
+
+        # ── Phase 4: Cosine re-spacing ────────────────────────────────────
+        self.logger.info("─── Cosine Re-spacing ───")
+        self.logger.info(f"  Re-sampling each surface to {n_points} cosine-spaced points...")
+        self.logger.info(f"  Before: upper={len(upper)} pts, lower={len(lower)} pts")
+
+        upper_cs = self._apply_cosine_spacing(upper, n_points)
+        lower_cs = self._apply_cosine_spacing(lower, n_points)
+        self.logger.info(f"  After : upper={len(upper_cs)} pts, lower={len(lower_cs)} pts")
+
+        # Combine back into a single closed loop: upper (LE→TE) then
+        # lower reversed (TE→LE), so we get a clockwise closed polygon.
+        # Skip the duplicate LE point at the junction.
+        airfoil_combined = np.vstack([upper_cs, lower_cs[1:]]) * self.chord_m
+        self.logger.info(f"  Combined airfoil: {len(airfoil_combined)} points "
+                         f"(scaled to {self.chord_m} m chord)")
+
+        # ── Phase 5: Build far-field domain ───────────────────────────────
+        self.logger.info("─── Far-Field Domain ───")
+        domain = self._build_c_domain(self.chord_m)
+
+        # ── Phase 6: Export files ─────────────────────────────────────────
+        self.logger.info("─── Export ───")
+
+        csv_path = os.path.join(self.output_dir, f"{self.name}_cleaned.csv")
+        self._write_csv(airfoil_combined, csv_path)
+
+        dxf_path = os.path.join(self.output_dir, f"{self.name}.dxf")
+        self._write_dxf(airfoil_combined, domain, dxf_path)
+
+        # ── Summary ───────────────────────────────────────────────────────
+        self.logger.info("=" * 60)
+        self.logger.info("  GEOMETRY AGENT — Processing complete")
+        self.logger.info(f"  Airfoil      : {self.name}")
+        self.logger.info(f"  TE treatment : {te_result['treatment']} "
+                         f"(gap: {te_result['gap_pct']:.3f}%)")
+        self.logger.info(f"  Points/surface: {n_points} (cosine-spaced)")
+        self.logger.info(f"  Outputs      :")
+        self.logger.info(f"    CSV : {csv_path}")
+        self.logger.info(f"    DXF : {dxf_path}")
+        self.logger.info(f"    Log : {self.log_path}")
+        self.logger.info("=" * 60)
+
+        return {
+            "csv_path": csv_path,
+            "dxf_path": dxf_path,
+            "log_path": self.log_path,
+            "te_analysis": te_result,
+            "n_points_per_surface": n_points,
+        }
+
+
+# ─── CLI entrypoint ─────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Geometry Agent: preprocess .dat airfoils for CFD."
+    )
+    parser.add_argument(
+        "--input", required=True,
+        help="Path to the raw .dat airfoil coordinate file.",
+    )
+    parser.add_argument(
+        "--chord", type=float, default=1.0,
+        help="Chord length in metres (default: 1.0).",
+    )
+    parser.add_argument(
+        "--output-dir", default="data/raw",
+        help="Output directory for cleaned files (default: data/raw).",
+    )
+    parser.add_argument(
+        "--points", type=int, default=150,
+        help="Points per surface after cosine re-spacing (default: 150).",
+    )
+    args = parser.parse_args()
+
+    agent = GeometryAgent(
+        dat_path=args.input,
+        chord_m=args.chord,
+        output_dir=args.output_dir,
+    )
+    result = agent.process(n_points=args.points)
+
+    print(f"\nDone! Files generated:")
+    for key in ("csv_path", "dxf_path", "log_path"):
+        print(f"  {key}: {result[key]}")
