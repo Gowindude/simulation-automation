@@ -154,3 +154,115 @@ class GeometryAgent:
 
         return {"gap": gap, "gap_pct": gap_pct, "treatment": treatment, "reason": reason}
 
+    def _split_surfaces(self, coords: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Split the coordinate array into upper and lower surfaces.
+
+        Selig format goes from TE (upper) → LE → TE (lower). The leading
+        edge is the point with the smallest x-coordinate. We find that
+        index and split there.
+
+        Returns:
+            (upper, lower) — each is an Mx2 array, both starting from LE.
+        """
+        # The leading edge is the point closest to x=0.
+        le_idx = np.argmin(coords[:, 0])
+
+        # Upper surface: from TE down to LE. Reverse so it goes LE → TE.
+        upper = coords[:le_idx + 1][::-1]
+        # Lower surface: from LE down to TE. Already in LE → TE order.
+        lower = coords[le_idx:]
+
+        self.logger.info(f"  Split at LE index {le_idx}: "
+                         f"upper={len(upper)} pts, lower={len(lower)} pts")
+        return upper, lower
+
+    def _treat_trailing_edge(
+        self, upper: np.ndarray, lower: np.ndarray, treatment: str
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Apply the chosen trailing edge treatment.
+
+        'sharpen': use a cubic spline to smoothly bring the last ~10% of
+                   each surface toward a shared TE point. This eliminates
+                   the blunt-TE base pressure drag without adding a sharp
+                   corner (which would cause mesh quality issues).
+
+        'snap':    move both TE endpoints to their midpoint. Simple and
+                   safe when the gap is already negligibly small.
+
+        Returns updated (upper, lower) arrays.
+        """
+        if treatment == "snap":
+            # Average the two TE points to get a single closed point.
+            te_mid = (upper[-1] + lower[-1]) / 2.0
+            upper[-1] = te_mid
+            lower[-1] = te_mid
+            self.logger.info(f"  Snapped TE to midpoint: ({te_mid[0]:.6f}, {te_mid[1]:.6f})")
+
+        elif treatment == "sharpen":
+            # Cubic-spline the last 10% of each surface toward a shared TE point.
+            # We compute a blending target at x=1.0, y=0 (symmetric TE),
+            # then smoothly transition the last few points toward it.
+            te_target = np.array([(upper[-1, 0] + lower[-1, 0]) / 2, 0.0])
+
+            for surface, label in [(upper, "upper"), (lower, "lower")]:
+                n = len(surface)
+                # Blend the last 10% of points toward the TE target.
+                n_blend = max(3, int(0.1 * n))
+                for i in range(n_blend):
+                    # Linear blend weight: 0 at the start of the blend region, 1 at TE.
+                    w = (i + 1) / n_blend
+                    idx = n - n_blend + i
+                    surface[idx] = (1 - w) * surface[idx] + w * te_target
+
+                self.logger.info(f"  Sharpened {label} TE: blended last {n_blend} points "
+                                 f"toward ({te_target[0]:.6f}, {te_target[1]:.6f})")
+
+        return upper, lower
+
+    def _apply_cosine_spacing(
+        self, surface: np.ndarray, n_points: int = 150
+    ) -> np.ndarray:
+        """
+        Re-sample a surface using cosine-distributed x-coordinates.
+
+        Why cosine spacing? Uniform point distribution puts the same number
+        of points on the flat mid-chord as on the highly-curved leading edge.
+        That's terrible for CFD — the LE and TE need 5-10x more resolution
+        because that's where the pressure gradients (and therefore the forces
+        we're trying to predict) are steepest.
+
+        Cosine spacing uses x = 0.5 * (1 - cos(θ)) for θ ∈ [0, π], which
+        naturally clusters points at x=0 (LE) and x=1 (TE).
+
+        Args:
+            surface:  Mx2 array of (x, y) from LE to TE.
+            n_points: Number of re-sampled points (default 150).
+
+        Returns:
+            n_points × 2 array with cosine-spaced coordinates.
+        """
+        # Build a cubic spline of y(x) along the surface.
+        # We need to parameterise by arc length first, not x, because
+        # the surface can be multi-valued in y near the LE.
+        dx = np.diff(surface[:, 0])
+        dy = np.diff(surface[:, 1])
+        ds = np.sqrt(dx**2 + dy**2)
+        s = np.concatenate(([0], np.cumsum(ds)))  # arc-length parameter
+        s /= s[-1]  # normalise to [0, 1]
+
+        # Spline x(s) and y(s) separately.
+        spline_x = CubicSpline(s, surface[:, 0])
+        spline_y = CubicSpline(s, surface[:, 1])
+
+        # Cosine-distributed parameter values. The cos transform clusters
+        # values near s=0 (LE) and s=1 (TE) where the curvature is highest.
+        theta = np.linspace(0, np.pi, n_points)
+        s_new = 0.5 * (1 - np.cos(theta))
+
+        x_new = spline_x(s_new)
+        y_new = spline_y(s_new)
+
+        return np.column_stack([x_new, y_new])
+
