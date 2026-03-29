@@ -1,0 +1,24 @@
+# ─── Generated mesh and solution files ──────────────────────
+# These are large binary files produced by Ansys Fluent.
+# They should NOT be committed — regenerate with mesh_airfoil.py.
+*.msh
+*.msh.h5
+*.cas
+*.cas.h5
+*.dat
+*.dat.h5
+
+# ─── Airfoil coordinate files (downloaded by airfoil_downloader.py) ─────
+# There are ~1600+ of these; download them on demand, don't commit.
+data/raw/airfoils/
+
+# ─── Python bytecode ────────────────────────────────────────
+__pycache__/
+*.pyc
+
+# ─── IDE / OS ───────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
