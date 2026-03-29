@@ -53,14 +53,21 @@ class FluidistAgent:
         assert self.solver.health_check.is_serving, "Fluent session is not healthy!"
         print("Fluent launched successfully.")
 
-    def generate_or_load_mesh(self, coords: list, mesh_path: str = "airfoil_2d.msh"):
+    def generate_or_load_mesh(
+        self,
+        coords: list,
+        mesh_path: str = "airfoil_2d.msh.h5",
+        geometry_file: str | None = None,
+    ):
         """
-        Check if a mesh file already exists and load it; otherwise write geometry
-        coordinates to a temp file for the mesher to use later.
+        Check if a mesh file already exists and load it; otherwise generate
+        a new 2D mesh using PyFluent's meshing mode and then load it.
 
         Args:
             coords (list of tuple): [(x1, y1), ...] in Meters (SI).
-            mesh_path (str): Path to an existing .msh case file.
+            mesh_path (str): Path to an existing .msh.h5 case file.
+            geometry_file (str | None): Path to .fmd geometry. If None,
+                                        uses PyFluent's built-in NACA0012.
         """
         # Store coords for reference — these are the raw (x,y) defining the airfoil profile.
         # All values are in Meters as per SI convention.
@@ -70,18 +77,22 @@ class FluidistAgent:
             # If a mesh was already generated (e.g. from a previous run), skip re-meshing.
             # Re-meshing is expensive, so we reuse it when nothing has changed geometrically.
             print(f"Existing mesh found at '{mesh_path}'. Loading...")
-            # settings.file.read_case loads only the mesh + setup (no solution data).
-            self.solver.settings.file.read_case(file_name=mesh_path)
         else:
-            # No mesh on disk — write the coordinates out to a CSV so the mesher
-            # can pick them up. In a full workflow this feeds into Fluent Meshing
-            # or SpaceClaim via a journal file.
-            coords_path = os.path.splitext(mesh_path)[0] + "_coords.csv"
-            with open(coords_path, "w", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(["x_m", "y_m"])   # header — units are Meters
-                writer.writerows(coords)
-            print(f"No mesh found. Coordinates written to '{coords_path}' for mesher.")
+            # No mesh on disk — generate one using the 2D meshing workflow.
+            # This launches a *separate* Fluent meshing session (because 2D
+            # meshing mode can't switch to solver mode — PyFluent limitation),
+            # generates the mesh, exports it as .msh.h5, then closes.
+            from physics_cores.ansys_fluent.mesh_airfoil import generate_airfoil_mesh
+
+            print("No mesh found. Generating via Fluent meshing workflow...")
+            mesh_path = generate_airfoil_mesh(
+                geometry_file=geometry_file,
+                output_mesh=mesh_path,
+            )
+            print(f"Mesh generated at '{mesh_path}'. Loading into solver...")
+
+        # Load the mesh into the active solver session.
+        self.solver.settings.file.read_case(file_name=mesh_path)
 
     def set_boundary_conditions(self, inlet_velocity: float = 50.0):
         """
