@@ -266,3 +266,89 @@ class GeometryAgent:
 
         return np.column_stack([x_new, y_new])
 
+    def _build_c_domain(self, chord: float) -> dict[str, np.ndarray]:
+        """
+        Generate a C-shaped far-field domain around the airfoil.
+
+        The C-domain is the standard choice for external aero because:
+          - The semicircular inlet captures flow from all upstream angles.
+          - The straight downstream section lets the wake develop naturally.
+          - It's much more mesh-efficient than a rectangular domain.
+
+        Distances are in the same units as the airfoil (chord * self.chord_m).
+        Standard CFD practice: 20c upstream, 40c downstream, 20c top/bottom.
+        """
+        # Domain extents (multiples of chord length).
+        r_inlet = 20.0 * chord   # semicircle radius for the upstream inlet
+        x_outlet = 40.0 * chord  # downstream extent for the outlet
+
+        # Semicircular inlet arc from top to bottom (180° arc centered at LE).
+        n_arc = 80
+        angles = np.linspace(np.pi / 2, -np.pi / 2, n_arc)
+        inlet = np.column_stack([r_inlet * np.cos(angles), r_inlet * np.sin(angles)])
+
+        # Straight top edge from inlet arc end to outlet.
+        top = np.array([inlet[0], [x_outlet, r_inlet]])
+        # Straight bottom edge from outlet to inlet arc end.
+        bottom = np.array([[x_outlet, -r_inlet], inlet[-1]])
+        # Outlet: vertical line at x_outlet.
+        outlet = np.array([[x_outlet, r_inlet], [x_outlet, -r_inlet]])
+
+        self.logger.info(f"  C-domain built: radius={r_inlet:.1f}, outlet_x={x_outlet:.1f}")
+        return {"inlet": inlet, "top": top, "bottom": bottom, "outlet": outlet}
+
+    def _write_dxf(
+        self, airfoil: np.ndarray, domain: dict[str, np.ndarray], path: str
+    ):
+        """
+        Write a minimal DXF file containing the airfoil and domain boundaries.
+
+        DXF is a text-based CAD exchange format that Fluent Meshing can import
+        directly. We write it by hand (no external libs) because we only need
+        LWPOLYLINE entities — the simplest DXF entity type.
+
+        Each boundary (airfoil, inlet, top, bottom, outlet) is written as a
+        separate polyline on its own layer so the mesher can assign boundary
+        types by layer name.
+        """
+        def write_polyline(f, points: np.ndarray, layer: str, closed: bool = False):
+            """Write a single LWPOLYLINE entity to the DXF file."""
+            f.write("0\nLWPOLYLINE\n")
+            f.write(f"8\n{layer}\n")          # layer name → becomes zone name
+            f.write(f"90\n{len(points)}\n")   # number of vertices
+            f.write(f"70\n{1 if closed else 0}\n")  # 1 = closed polyline
+            for pt in points:
+                f.write(f"10\n{pt[0]:.8f}\n")  # X coordinate
+                f.write(f"20\n{pt[1]:.8f}\n")  # Y coordinate
+
+        with open(path, "w") as f:
+            # DXF header — minimal required sections.
+            f.write("0\nSECTION\n2\nENTITIES\n")
+
+            # Airfoil polyline — closed loop.
+            write_polyline(f, airfoil, layer="airfoil", closed=True)
+
+            # Domain boundaries — each on its own named layer.
+            for name, pts in domain.items():
+                write_polyline(f, pts, layer=name, closed=False)
+
+            # End of entities section and file.
+            f.write("0\nENDSEC\n0\nEOF\n")
+
+        self.logger.info(f"  DXF written to: {path}")
+
+    def _write_csv(self, coords: np.ndarray, path: str):
+        """
+        Write cleaned coordinates to a CSV file (x_m, y_m in SI metres).
+
+        This is the handoff format for downstream tools that don't read DXF
+        (e.g. the Structuralist agent needs surface coordinates for load mapping).
+        """
+        import csv as csv_mod
+        with open(path, "w", newline="") as f:
+            writer = csv_mod.writer(f)
+            writer.writerow(["x_m", "y_m"])
+            for pt in coords:
+                writer.writerow([f"{pt[0]:.8f}", f"{pt[1]:.8f}"])
+        self.logger.info(f"  CSV written to: {path} ({len(coords)} points)")
+
