@@ -156,3 +156,76 @@ def generate_airfoil_mesh(
     local_sz.add_child_and_update(defer_update=False)
     print("  Local sizing: Airfoil curvature refinement added.")
 
+    # ── Step 7: Add boundary layers ────────────────────────────────────────
+    # Boundary layers are thin, structured rows of cells stacked on the
+    # airfoil wall. They are essential for RANS simulations because the
+    # turbulence model (k-omega SST) needs to resolve the velocity gradient
+    # inside the boundary layer — if the first cell is too thick, the wall
+    # shear stress and pressure predictions will be wildly wrong.
+    # We use the aspect-ratio method with 4 layers as a starting point;
+    # for production runs you'd increase to 10-20 layers with a growth ratio.
+    add_bl = two_d.add_2d_boundary_layers
+    add_bl.add_child = "yes"
+    add_bl.control_name = "aspect-ratio_1"
+    add_bl.number_of_layers = 4
+    add_bl.offset_method_type = "aspect-ratio"
+    add_bl.add_child_and_update(defer_update=False)
+    print("Boundary layers added (4 layers, aspect-ratio method).")
+
+    # ── Step 8: Generate the 2D surface mesh ───────────────────────────────
+    # show_advanced_options must be True to access the zone-merging options.
+    # We disable zone merging so each boundary (airfoil, inlet, outlet, etc.)
+    # keeps its own named zone — the solver needs these names to apply BCs.
+    gen_mesh = two_d.generate_initial_surface_mesh
+    prefs = gen_mesh.surface_2d_preferences
+    prefs.show_advanced_options = True
+    prefs.merge_edge_zones_based_on_labels = "no"
+    prefs.merge_face_zones_based_on_labels = "no"
+    gen_mesh()
+    print("2D surface mesh generated.")
+
+    # ── Step 9: Export the mesh as .msh.h5 ─────────────────────────────────
+    # We can't switch to solver mode from 2D meshing (PyFluent limitation),
+    # so we export the mesh to disk. The solver session in cfd_tool.py will
+    # read this file via settings.file.read_case().
+    output_mesh = os.path.abspath(output_mesh)
+    meshing.tui.file.export.fluent_2d_mesh(output_mesh)
+    print(f"Mesh exported to: {output_mesh}")
+
+    # ── Step 10: Clean up ──────────────────────────────────────────────────
+    meshing.exit()
+    print("Meshing session closed.")
+
+    return output_mesh
+
+
+# ─── CLI entrypoint ─────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Generate a 2D airfoil mesh using PyFluent meshing."
+    )
+    parser.add_argument(
+        "--geometry",
+        default=None,
+        help="Path to .fmd geometry file. Default: uses built-in NACA0012.",
+    )
+    parser.add_argument(
+        "--output",
+        default="airfoil_2d.msh.h5",
+        help="Output .msh.h5 file path (default: airfoil_2d.msh.h5).",
+    )
+    parser.add_argument(
+        "--unit",
+        default="m",
+        help="Length unit in the geometry file (default: m).",
+    )
+    args = parser.parse_args()
+
+    mesh_path = generate_airfoil_mesh(
+        geometry_file=args.geometry,
+        output_mesh=args.output,
+        length_unit=args.unit,
+    )
+    print(f"\nDone! Mesh ready at: {mesh_path}")
