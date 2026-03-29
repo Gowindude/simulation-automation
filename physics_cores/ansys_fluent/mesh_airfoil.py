@@ -85,3 +85,74 @@ def generate_airfoil_mesh(
     load_cad()
     print("Geometry loaded successfully.")
 
+    # ── Step 4: Update boundaries ──────────────────────────────────────────
+    # Auto-detect boundary zones from the imported geometry. Using "zone"
+    # selection type tells the mesher to name boundaries based on the zone
+    # labels defined in the .fmd file (e.g. "airfoil", "inlet", "outlet").
+    update_bnd = two_d.update_boundaries
+    update_bnd.selection_type = "zone"
+    update_bnd()
+    print("Boundaries updated from geometry zones.")
+
+    # ── Step 5: Define global sizing ───────────────────────────────────────
+    # These controls set the coarsest / finest cell sizes for the whole domain.
+    # curvature_normal_angle: max angle (degrees) between adjacent face normals.
+    #   Lower = more cells on curved edges. 20° is a good balance for airfoils.
+    # max_size: largest cell anywhere in the far field (keeps the mesh small).
+    # min_size: smallest cell allowed globally (prevents over-refinement).
+    # size_functions: "Curvature" adapts cell size to match surface curvature —
+    #   crucial for the leading edge where the radius of curvature is tiny.
+    global_sz = two_d.define_global_sizing
+    global_sz.curvature_normal_angle = 20
+    global_sz.max_size = 2000.0
+    global_sz.min_size = 5.0
+    global_sz.size_functions = "Curvature"
+    global_sz()
+    print("Global sizing defined (curvature-based, min=5, max=2000).")
+
+    # ── Step 6: Add local sizing controls ──────────────────────────────────
+    # We add three refinement zones to capture the physics accurately:
+    local_sz = two_d.add_local_sizing_wtm
+
+    # 6a) Body of Influence (BOI) — a region around the airfoil where we
+    #     force smaller cells. This captures the wake and pressure gradients
+    #     that extend downstream of the trailing edge.
+    local_sz.add_child = "yes"
+    local_sz.boi_control_name = "boi_1"
+    local_sz.boi_execution = "Body Of Influence"
+    local_sz.boi_face_label_list = ["boi"]
+    local_sz.boi_size = 50.0
+    local_sz.boi_zoneor_label = "label"
+    local_sz.draw_size_control = True
+    local_sz.add_child_and_update(defer_update=False)
+    print("  Local sizing: Body of Influence added.")
+
+    # 6b) Edge sizing at the trailing edge — the TE has a sharp geometric
+    #     discontinuity where flow separation occurs, so we need very fine
+    #     cells there to capture the pressure drop accurately.
+    local_sz.add_child = "yes"
+    local_sz.boi_control_name = "edgesize_1"
+    local_sz.boi_execution = "Edge Size"
+    local_sz.boi_size = 5.0
+    local_sz.boi_zoneor_label = "label"
+    local_sz.draw_size_control = True
+    local_sz.edge_label_list = ["airfoil-te"]
+    local_sz.add_child_and_update(defer_update=False)
+    print("  Local sizing: Trailing edge refinement added.")
+
+    # 6c) Curvature-based sizing on the airfoil surface — the leading edge
+    #     has a very small radius of curvature, so we refine heavily there
+    #     to resolve the stagnation point and suction peak.
+    local_sz.add_child = "yes"
+    local_sz.boi_control_name = "curvature_1"
+    local_sz.boi_curvature_normal_angle = 10
+    local_sz.boi_execution = "Curvature"
+    local_sz.boi_max_size = 2
+    local_sz.boi_min_size = 1.5
+    local_sz.boi_scope_to = "edges"
+    local_sz.boi_zoneor_label = "label"
+    local_sz.draw_size_control = True
+    local_sz.edge_label_list = ["airfoil"]
+    local_sz.add_child_and_update(defer_update=False)
+    print("  Local sizing: Airfoil curvature refinement added.")
+
