@@ -105,43 +105,37 @@ def main():
         from ansys.fluent.core import launch_fluent, FluentMode, Precision, Dimension
         meshing = launch_fluent(
             mode=FluentMode.MESHING,
-            dimension=Dimension.TWO,
+            dimension=Dimension.THREE,
             precision=Precision.DOUBLE,
             processor_count=4
         )
         
-        # ── PURE SCHEME INJECTION (BULLETPROOF FLUENT API) ─────────────
-        # PyFluent's python wrappers (two_dimensional_meshing and tui.*) 
-        # are deeply bugged in Ansys 2025 out-of-core. By using the Scheme 
-        # evaluator, we inject text commands directly into the core engine 
-        # without touching the broken Python-to-C++ wrapper layer.
-
-        def send_tui(cmd_str):
-            # We must escape inner double-quotes for the Scheme string parser
-            escaped_cmd = cmd_str.replace('"', '\\\\"')
-            meshing.scheme.eval(f'(ti-menu-load-string "{{escaped_cmd}}")')
+        # ── NATIVE PYFLUENT API ─────────────
+        # Since we initialized in 3D Mode, the `meshing.tui` objects 
+        # operate smoothly without the 2D workflow WFTreeView crash.
 
         print("Importing CAD (STEP)...")
-        send_tui('/file/import/cad yes "{step_fixed}" yes m yes')
+        meshing.tui.file.import_cad(file_name="{step_fixed}", append="no")
 
-        # Compute sizing based on curvature
         print("Setting up global mesh size...")
-        send_tui('/mesh/scoped-sizing/create global curvature face yes no 0.001 0.01 18.0 1.2')
-        send_tui('/mesh/scoped-sizing/compute')
+        meshing.tui.mesh.scoped_sizing.create(
+            "global", "curvature", "face", "yes", "no", 
+            "0.001", "0.01", "18.0", "1.2"
+        )
+        meshing.tui.mesh.scoped_sizing.compute()
 
         print("Applying Boundary Layers...")
-        # Add Boundary Layers uniformly to all edges
-        send_tui(
-            f'/mesh/boundary-layer/create airfoil_bl uniform first-aspect-ratio 5 '
-            f'{params["bl_layers"]} {params["bl_ratio"]} zone *'
+        meshing.tui.mesh.boundary_layer.create(
+            "airfoil_bl", "uniform", "first-aspect-ratio", "5", 
+            "{params['bl_layers']}", "{params['bl_ratio']}", "zone", "*"
         )
 
-        print("Generating 2D Surface Mesh...")
+        print(f"Generating 2D Surface Mesh...")
         # Pure 2D simulation must use surface-mesh, NOT volume-mesh.
-        send_tui('/mesh/surface-mesh/create yes')
+        meshing.tui.mesh.surface_mesh.create()
 
-        print(f"Exporting Mesh to {mesh_str}...")
-        send_tui('/file/write-mesh "{mesh_fixed}"')
+        print("Exporting Mesh...")
+        meshing.tui.file.write_mesh("{mesh_fixed}")
         
         meshing.exit()
         print("MESH_SUCCESS")

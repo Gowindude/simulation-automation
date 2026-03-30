@@ -16,6 +16,17 @@ data/raw/airfoils/
 __pycache__/
 *.pyc
 
+# ─── Ansys Fluent Logs and Temporary Files ──────────────────
+*.trn
+cleanup-fluent-*.bat
+fluent-*.log
+*.h5
+
+# ─── Test Outputs and JSON Logs ─────────────────────────────
+e2e_test_out.*
+test_out*.*
+tmp_check.txt
+
 # ─── IDE / OS ───────────────────────────────────────────────
 .vscode/
 .idea/

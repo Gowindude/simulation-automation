@@ -89,25 +89,39 @@ def main():
     dat_path = download_test_airfoil(output_dir)
     geo_agent = GeometryAgent(dat_path=dat_path, chord_m=1.0, output_dir=output_dir)
     geo_result = geo_agent.process(n_points=150)
-    print(f"  PASS: Geometry Agent generated DXF at {geo_result['dxf_path']}")
+    print(f"  PASS: Geometry Agent generated CAD at {geo_result['step_path']}")
 
     # Load the cleaned coords from the CSV to pass to the FluidistAgent
-    # (used for reference, e.g., structural mapping later)
-    _, cleaned_coords = load_dat_file(dat_path)  # Just dummy loading here to test the API
+    _, cleaned_coords = load_dat_file(dat_path)
 
-    # ── Step 2: Launch solver ──────────────────────────────────────────────
-    print("\n[2/6] Launching Fluent solver...")
-    fluidist = FluidistAgent(show_gui=False)
-    print("  PASS: Fluent solver launched.")
-
-    # ── Step 3: Mesh & Load ────────────────────────────────────────────────
-    print("\n[3/6] Generating/loading mesh from DXF...")
-    fluidist.generate_or_load_mesh(
-        coords=cleaned_coords,
-        dxf_file=geo_result["dxf_path"],
-        mesh_path=mesh_path,
+    # ── Step 2: Mesh Generation Agent ──────────────────────────────────────
+    print("\n[2/6] Generating Agentic Mesh Sequence...")
+    from agents.mesh_agent import MeshAgent
+    mesh_agent = MeshAgent(output_dir=output_dir)
+    
+    mesh_path = mesh_agent.generate_mesh(
+        step_path=geo_result["step_path"],
+        name="naca001234"
     )
-    print("  PASS: Mesh loaded into solver.")
+    if not mesh_path:
+        print("  FAIL: Mesh Agent failed to generate the mesh.")
+        return 1
+    print(f"  PASS: Mesh generated at {mesh_path}")
+
+    # Introduce a delay so the Student License manager has time to release the token
+    # between the Mesher subprocess and the Solver main process.
+    import time
+    print("\n  [Sys] Waiting 8 seconds for Ansys License to gracefully release...")
+    time.sleep(8)
+
+    # ── Step 3: Launch solver & Load Mesh ──────────────────────────────────
+    print("\n[3/6] Launching Fluent solver & Loading Mesh...")
+    fluidist = FluidistAgent(show_gui=False)
+    
+    # Load the pure mesh natively instead of processing DXFs
+    fluidist.solver.file.read_mesh(file_name=mesh_path, file_type="mesh")
+    
+    print("  PASS: Fluent solver launched and Mesh Loaded.")
 
     # ── Step 4: Set boundary conditions ────────────────────────────────────
     print("\n[4/6] Setting boundary conditions (50 m/s, k-omega SST)...")
