@@ -266,74 +266,7 @@ class GeometryAgent:
 
         return np.column_stack([x_new, y_new])
 
-    def _build_c_domain(self, chord: float) -> dict[str, np.ndarray]:
-        """
-        Generate a C-shaped far-field domain around the airfoil.
 
-        The C-domain is the standard choice for external aero because:
-          - The semicircular inlet captures flow from all upstream angles.
-          - The straight downstream section lets the wake develop naturally.
-          - It's much more mesh-efficient than a rectangular domain.
-
-        Distances are in the same units as the airfoil (chord * self.chord_m).
-        Standard CFD practice: 20c upstream, 40c downstream, 20c top/bottom.
-        """
-        # Domain extents (multiples of chord length).
-        r_inlet = 20.0 * chord   # semicircle radius for the upstream inlet
-        x_outlet = 40.0 * chord  # downstream extent for the outlet
-
-        # Semicircular inlet arc from top to bottom (180° arc centered at LE).
-        n_arc = 80
-        angles = np.linspace(np.pi / 2, -np.pi / 2, n_arc)
-        inlet = np.column_stack([r_inlet * np.cos(angles), r_inlet * np.sin(angles)])
-
-        # Straight top edge from inlet arc end to outlet.
-        top = np.array([inlet[0], [x_outlet, r_inlet]])
-        # Straight bottom edge from outlet to inlet arc end.
-        bottom = np.array([[x_outlet, -r_inlet], inlet[-1]])
-        # Outlet: vertical line at x_outlet.
-        outlet = np.array([[x_outlet, r_inlet], [x_outlet, -r_inlet]])
-
-        self.logger.info(f"  C-domain built: radius={r_inlet:.1f}, outlet_x={x_outlet:.1f}")
-        return {"inlet": inlet, "top": top, "bottom": bottom, "outlet": outlet}
-
-    def _write_dxf(
-        self, airfoil: np.ndarray, domain: dict[str, np.ndarray], path: str
-    ):
-        """
-        Write a standard-compliant DXF file using ezdxf.
-
-        Fluent Meshing's CAD importer is strict and rejected our hand-crafted
-        minimal DXF. We now use ezdxf to ensure a proper header and entity
-        structure the Ansys importer will accept.
-        """
-        try:
-            import ezdxf
-        except ImportError:
-            self.logger.error("  ezdxf not installed. Cannot export DXF. Run: pip install ezdxf")
-            raise
-
-        # Create a new DXF document (R2010 is widely compatible with modern CAD importers).
-        doc = ezdxf.new("R2010")
-        msp = doc.modelspace()
-
-        # Helper to add a 2D polyline (LWPOLYLINE) to a specific layer.
-        def add_polyline(points, layer_name, closed=False):
-            if layer_name not in doc.layers:
-                doc.layers.add(name=layer_name)
-            # Ensure shape is just (x, y) tuples.
-            pts_2d = [(pt[0], pt[1]) for pt in points]
-            msp.add_lwpolyline(pts_2d, format="xy", dxfattribs={"layer": layer_name}, close=closed)
-
-        # Build airfoil layer (closed loop)
-        add_polyline(airfoil, layer_name="airfoil", closed=True)
-
-        # Build domain boundaries
-        for name, pts in domain.items():
-            add_polyline(pts, layer_name=name, closed=False)
-
-        doc.saveas(path)
-        self.logger.info(f"  DXF (ezdxf) written to: {path}")
 
     def _write_csv(self, coords: np.ndarray, path: str):
         """
@@ -401,18 +334,20 @@ class GeometryAgent:
         self.logger.info(f"  Combined airfoil: {len(airfoil_combined)} points "
                          f"(scaled to {self.chord_m} m chord)")
 
-        # ── Phase 5: Build far-field domain ───────────────────────────────
-        self.logger.info("─── Far-Field Domain ───")
-        domain = self._build_c_domain(self.chord_m)
-
-        # ── Phase 6: Export files ─────────────────────────────────────────
-        self.logger.info("─── Export ───")
-
+        # ── Phase 5: Export clean coordinates ─────────────────────────────
+        self.logger.info("─── Export CSV ───")
         csv_path = os.path.join(self.output_dir, f"{self.name}_cleaned.csv")
         self._write_csv(airfoil_combined, csv_path)
 
-        dxf_path = os.path.join(self.output_dir, f"{self.name}.dxf")
-        self._write_dxf(airfoil_combined, domain, dxf_path)
+        # ── Phase 6: Generate CAD Domain (.step) ──────────────────────────
+        self.logger.info("─── CAD Generation ───")
+        from agents.cad_builder import CADBuilderAgent
+        cad_agent = CADBuilderAgent(output_dir=self.output_dir)
+        step_path = cad_agent.generate_domain_step(
+            airfoil_coords=airfoil_combined,
+            chord_m=self.chord_m,
+            name=self.name
+        )
 
         # ── Summary ───────────────────────────────────────────────────────
         self.logger.info("=" * 60)
@@ -422,19 +357,18 @@ class GeometryAgent:
                          f"(gap: {te_result['gap_pct']:.3f}%)")
         self.logger.info(f"  Points/surface: {n_points} (cosine-spaced)")
         self.logger.info(f"  Outputs      :")
-        self.logger.info(f"    CSV : {csv_path}")
-        self.logger.info(f"    DXF : {dxf_path}")
-        self.logger.info(f"    Log : {self.log_path}")
+        self.logger.info(f"    CSV  : {csv_path}")
+        self.logger.info(f"    STEP : {step_path}")
+        self.logger.info(f"    Log  : {self.log_path}")
         self.logger.info("=" * 60)
 
         return {
             "csv_path": csv_path,
-            "dxf_path": dxf_path,
+            "step_path": step_path,
             "log_path": self.log_path,
             "te_analysis": te_result,
             "n_points_per_surface": n_points,
         }
-
 
 # ─── CLI entrypoint ─────────────────────────────────────────────────────────
 if __name__ == "__main__":
