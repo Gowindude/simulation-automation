@@ -92,6 +92,10 @@ class MeshAgent:
         step_str = step_path.replace("\\", "\\\\")
         mesh_str = mesh_path.replace("\\", "\\\\")
         
+        # Scheme eval requires forward slashes
+        step_fixed = step_path.replace("\\", "/")
+        mesh_fixed = mesh_path.replace("\\", "/")
+        
         script_content = f"""import os
 import sys
 import ansys.fluent.core as pyfluent
@@ -103,40 +107,41 @@ def main():
             mode=FluentMode.MESHING,
             dimension=Dimension.TWO,
             precision=Precision.DOUBLE,
-            processor_count=4,
-            ui_mode="gui"
+            processor_count=4
         )
-        two_d = meshing.two_dimensional_meshing()
+        
+        # ── PURE SCHEME INJECTION (BULLETPROOF FLUENT API) ─────────────
+        # PyFluent's python wrappers (two_dimensional_meshing and tui.*) 
+        # are deeply bugged in Ansys 2025 out-of-core. By using the Scheme 
+        # evaluator, we inject text commands directly into the core engine 
+        # without touching the broken Python-to-C++ wrapper layer.
 
-        print("Loading CAD...")
-        load_cad = two_d.load_cad_geometry_2d
-        load_cad.file_name = r"{step_path}"
-        load_cad.length_unit = "m"
-        load_cad.refaceting.refacet = False
-        load_cad()
+        def send_tui(cmd_str):
+            # We must escape inner double-quotes for the Scheme string parser
+            escaped_cmd = cmd_str.replace('"', '\\\\"')
+            meshing.scheme.eval(f'(ti-menu-load-string "{{escaped_cmd}}")')
 
-        print("Updating Boundaries...")
-        update_bnd = two_d.update_boundaries
-        update_bnd.selection_type = "zone"
-        update_bnd()
+        print("Importing CAD (STEP)...")
+        send_tui('/file/import/cad yes "{step_fixed}" yes m yes')
 
-        print("Adding Boundary Layers...")
-        # Note: Depending on CAD import, the edge zone might be named differently
-        # (e.g. edge-1). We'll try wildcard *airfoil* or just the default edge.
-        add_bl = two_d.add_boundary_layers
-        add_bl.add_controls = True
-        add_bl.bl_control_name = "airfoil_bl"
-        add_bl.local_regions = "*"
-        add_bl.offset_method_type = "smooth-transition"
-        add_bl.number_of_layers = {params['bl_layers']}
-        add_bl.transition_ratio = {params['bl_ratio']}
-        add_bl()
+        # Compute sizing based on curvature
+        print("Setting up global mesh size...")
+        send_tui('/mesh/scoped-sizing/create global curvature face yes no 0.001 0.01 18.0 1.2')
+        send_tui('/mesh/scoped-sizing/compute')
 
-        print("Generating Mesh...")
-        two_d.generate_mesh()
+        print("Applying Boundary Layers...")
+        # Add Boundary Layers uniformly to all edges
+        send_tui(
+            f'/mesh/boundary-layer/create airfoil_bl uniform first-aspect-ratio 5 '
+            f'{params["bl_layers"]} {params["bl_ratio"]} zone *'
+        )
 
-        print(f"Exporting to {mesh_str}...")
-        meshing.meshing.File.WriteMesh(FileName=r"{mesh_str}")
+        print("Generating 2D Surface Mesh...")
+        # Pure 2D simulation must use surface-mesh, NOT volume-mesh.
+        send_tui('/mesh/surface-mesh/create yes')
+
+        print(f"Exporting Mesh to {mesh_str}...")
+        send_tui('/file/write-mesh "{mesh_fixed}"')
         
         meshing.exit()
         print("MESH_SUCCESS")
