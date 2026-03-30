@@ -98,10 +98,11 @@ import ansys.fluent.core as pyfluent
 
 def main():
     try:
-        meshing = pyfluent.launch_fluent(
-            mode=pyfluent.FluentMode.MESHING,
-            dimension=pyfluent.Dimension.TWO,
-            precision=pyfluent.Precision.DOUBLE,
+        from ansys.fluent.core import launch_fluent, FluentMode, Precision, Dimension
+        meshing = launch_fluent(
+            mode=FluentMode.MESHING,
+            dimension=Dimension.TWO,
+            precision=Precision.DOUBLE,
             processor_count=4,
             ui_mode="gui"
         )
@@ -109,7 +110,7 @@ def main():
 
         print("Loading CAD...")
         load_cad = two_d.load_cad_geometry_2d
-        load_cad.file_name = "{step_str}"
+        load_cad.file_name = r"{step_path}"
         load_cad.length_unit = "m"
         load_cad.refaceting.refacet = False
         load_cad()
@@ -135,7 +136,7 @@ def main():
         two_d.generate_mesh()
 
         print(f"Exporting to {mesh_str}...")
-        meshing.meshing.File.WriteMesh(FileName="{mesh_str}")
+        meshing.meshing.File.WriteMesh(FileName=r"{mesh_str}")
         
         meshing.exit()
         print("MESH_SUCCESS")
@@ -151,7 +152,7 @@ def main():
 if __name__ == "__main__":
     main()
 """
-        with open(script_path, "w") as f:
+        with open(script_path, "w", encoding="utf-8") as f:
             f.write(script_content)
 
 if __name__ == "__main__":
