@@ -64,7 +64,7 @@ def generate_airfoil_mesh(
     two_d = meshing.two_dimensional_meshing()
 
     # Load the .dxf geometry into the mesher.
-    load_cad = two_d.load_cad_geometry
+    load_cad = two_d.load_cad_geometry_2d
     load_cad.file_name = dxf_file
     load_cad.length_unit = length_unit
     # Refaceting re-triangulates the imported CAD surface. We disable it

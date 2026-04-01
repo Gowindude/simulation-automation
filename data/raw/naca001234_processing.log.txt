@@ -1,0 +1,32 @@
+2026-03-28 21:34:41,560 [INFO] Agent initialised for 'naca001234'
+2026-03-28 21:34:41,561 [INFO]   Source file : data/raw/airfoils/naca001234.dat
+2026-03-28 21:34:41,562 [INFO]   Chord length: 1.0 m
+2026-03-28 21:34:41,563 [INFO]   Raw points  : 33
+2026-03-28 21:34:41,563 [INFO] ============================================================
+2026-03-28 21:34:41,564 [INFO]   GEOMETRY AGENT — Starting autonomous processing
+2026-03-28 21:34:41,564 [INFO] ============================================================
+2026-03-28 21:34:41,573 [INFO]   Upper TE point : (1.000000, 0.001200)
+2026-03-28 21:34:41,576 [INFO]   Lower TE point : (1.000000, -0.001200)
+2026-03-28 21:34:41,576 [INFO]   TE gap         : 0.002400 c  (0.240% chord)
+2026-03-28 21:34:41,576 [INFO]   Threshold      : 0.5% chord
+2026-03-28 21:34:41,577 [INFO]   Decision       : SNAP
+2026-03-28 21:34:41,577 [INFO]   Reasoning      : TE gap (0.240%) is within 0.5% threshold. This is effectively sharp — the gap is smaller than a typical BL cell. Snapping both TE points to their midpoint guarantees a watertight geometry for the mesher without altering the aerodynamic shape.
+2026-03-28 21:34:41,583 [INFO]   Split at LE index 16: upper=17 pts, lower=17 pts
+2026-03-28 21:34:41,586 [INFO]   Snapped TE to midpoint: (1.000000, 0.000000)
+2026-03-28 21:34:41,591 [INFO]   Re-sampling each surface to 150 cosine-spaced points...
+2026-03-28 21:34:41,591 [INFO]   Before: upper=17 pts, lower=17 pts
+2026-03-28 21:34:41,597 [INFO]   After : upper=150 pts, lower=150 pts
+2026-03-28 21:34:41,597 [INFO]   Combined airfoil: 299 points (scaled to 1.0 m chord)
+2026-03-28 21:34:41,602 [INFO]   C-domain built: radius=20.0, outlet_x=40.0
+2026-03-28 21:34:41,614 [INFO]   CSV written to: data/raw\naca001234_cleaned.csv (299 points)
+2026-03-28 21:34:41,617 [INFO]   DXF written to: data/raw\naca001234.dxf
+2026-03-28 21:34:41,618 [INFO] ============================================================
+2026-03-28 21:34:41,618 [INFO]   GEOMETRY AGENT — Processing complete
+2026-03-28 21:34:41,619 [INFO]   Airfoil      : naca001234
+2026-03-28 21:34:41,620 [INFO]   TE treatment : snap (gap: 0.240%)
+2026-03-28 21:34:41,620 [INFO]   Points/surface: 150 (cosine-spaced)
+2026-03-28 21:34:41,621 [INFO]   Outputs      :
+2026-03-28 21:34:41,621 [INFO]     CSV : data/raw\naca001234_cleaned.csv
+2026-03-28 21:34:41,622 [INFO]     DXF : data/raw\naca001234.dxf
+2026-03-28 21:34:41,622 [INFO]     Log : data/raw\naca001234_processing.log
+2026-03-28 21:34:41,623 [INFO] ============================================================

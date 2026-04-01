@@ -78,17 +78,30 @@ class FluidistAgent:
             print(f"Existing mesh found at '{mesh_path}'. Loading...")
         else:
             # No mesh on disk — generate one using the 2D meshing workflow.
-            # This launches a *separate* Fluent meshing session (because 2D
-            # meshing mode can't switch to solver mode — PyFluent limitation),
-            # generates the mesh, exports it as .msh.h5, then closes.
+            # This launches a *separate* Fluent meshing session. Because Ansys
+            # Student licenses strictly allow only ONE concurrent session, we
+            # MUST close the current solver session to free the license, run
+            # the mesher, and then restart the solver session.
             from physics_cores.ansys_fluent.mesh_airfoil import generate_airfoil_mesh
+            import ansys.fluent.core as pyfluent
 
-            print("No mesh found. Generating via Fluent meshing workflow...")
+            print("No mesh found. Temporarily stopping solver to free license for mesher...")
+            self.solver.exit()
+
+            print("Generating mesh via Fluent meshing workflow...")
             mesh_path = generate_airfoil_mesh(
                 dxf_file=dxf_file,
                 output_mesh=mesh_path,
             )
-            print(f"Mesh generated at '{mesh_path}'. Loading into solver...")
+
+            print(f"Mesh generated at '{mesh_path}'. Restarting solver...")
+            self.solver = pyfluent.launch_fluent(
+                mode=pyfluent.FluentMode.SOLVER,
+                dimension=pyfluent.Dimension.TWO,
+                precision=pyfluent.Precision.DOUBLE,
+                processor_count=4,
+                show_gui=self.show_gui,
+            )
 
         # Load the mesh into the active solver session.
         self.solver.settings.file.read_case(file_name=mesh_path)
@@ -150,7 +163,7 @@ class FluidistAgent:
         solution.run_calculation.iterate(iter_count=iterations)
         print(f"Solver finished after up to {iterations} iterations.")
 
-    def export_pressure_csv(self, output_path: str = "data/raw/pressure_dist.csv"):
+    def export_pressure_csv(self, output_path: str = "data/results/pressure_dist.csv"):
         """
         Export the static pressure on the airfoil wall surface to a CSV file.
         This CSV becomes the handoff to the Structuralist FEA tool.

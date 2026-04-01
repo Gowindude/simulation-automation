@@ -42,7 +42,7 @@ class GeometryAgent:
     # effectively sharp at the mesh resolution we're using.
     TE_GAP_THRESHOLD = 0.005
 
-    def __init__(self, dat_path: str, chord_m: float = 1.0, output_dir: str = "data/raw"):
+    def __init__(self, dat_path: str, chord_m: float = 1.0, output_dir: str = "data/geometry"):
         """
         Initialise the agent with a raw .dat file and chord length.
 
@@ -87,7 +87,7 @@ class GeometryAgent:
         self.raw_coords = self._load_dat(dat_path)
         self.logger.info(f"  Raw points  : {len(self.raw_coords)}")
 
-    # ── Private helpers ─────────────────────────────────────────────────────
+    # --- Private helpers -----------------------------------------------------
 
     def _load_dat(self, path: str) -> np.ndarray:
         """
@@ -125,7 +125,7 @@ class GeometryAgent:
         gap = np.linalg.norm(first - last)
         gap_pct = gap * 100  # as percentage of chord
 
-        self.logger.info("─── Trailing Edge Analysis ───")
+        self.logger.info("--- Trailing Edge Analysis ---")
         self.logger.info(f"  Upper TE point : ({first[0]:.6f}, {first[1]:.6f})")
         self.logger.info(f"  Lower TE point : ({last[0]:.6f}, {last[1]:.6f})")
         self.logger.info(f"  TE gap         : {gap:.6f} c  ({gap_pct:.3f}% chord)")
@@ -283,7 +283,7 @@ class GeometryAgent:
                 writer.writerow([f"{pt[0]:.8f}", f"{pt[1]:.8f}"])
         self.logger.info(f"  CSV written to: {path} ({len(coords)} points)")
 
-    # ── Public interface ────────────────────────────────────────────────────
+    # --- Public interface ----------------------------------------------------
 
     def process(self, n_points: int = 150) -> dict:
         """
@@ -305,19 +305,19 @@ class GeometryAgent:
         self.logger.info("  GEOMETRY AGENT — Starting autonomous processing")
         self.logger.info("=" * 60)
 
-        # ── Phase 1: Trailing edge analysis ────────────────────────────────
+        # --- Phase 1: Trailing edge analysis --------------------------------
         te_result = self._analyze_trailing_edge()
 
-        # ── Phase 2: Split into upper/lower surfaces ──────────────────────
-        self.logger.info("─── Surface Splitting ───")
+        # --- Phase 2: Split into upper/lower surfaces ----------------------
+        self.logger.info("--- Surface Splitting ---")
         upper, lower = self._split_surfaces(self.raw_coords.copy())
 
-        # ── Phase 3: Apply TE treatment ───────────────────────────────────
-        self.logger.info("─── Trailing Edge Treatment ───")
+        # --- Phase 3: Apply TE treatment -----------------------------------
+        self.logger.info("--- Trailing Edge Treatment ---")
         upper, lower = self._treat_trailing_edge(upper, lower, te_result["treatment"])
 
-        # ── Phase 4: Cosine re-spacing ────────────────────────────────────
-        self.logger.info("─── Cosine Re-spacing ───")
+        # --- Phase 4: Cosine re-spacing ------------------------------------
+        self.logger.info("--- Cosine Re-spacing ---")
         self.logger.info(f"  Re-sampling each surface to {n_points} cosine-spaced points...")
         self.logger.info(f"  Before: upper={len(upper)} pts, lower={len(lower)} pts")
 
@@ -334,13 +334,13 @@ class GeometryAgent:
         self.logger.info(f"  Combined airfoil: {len(airfoil_combined)} points "
                          f"(scaled to {self.chord_m} m chord)")
 
-        # ── Phase 5: Export clean coordinates ─────────────────────────────
-        self.logger.info("─── Export CSV ───")
+        # --- Phase 5: Export clean coordinates -----------------------------
+        self.logger.info("--- Export CSV ---")
         csv_path = os.path.join(self.output_dir, f"{self.name}_cleaned.csv")
         self._write_csv(airfoil_combined, csv_path)
 
-        # ── Phase 6: Generate CAD Domain (.step) ──────────────────────────
-        self.logger.info("─── CAD Generation ───")
+        # --- Phase 6: Generate CAD Domain (.step) --------------------------
+        self.logger.info("--- CAD Generation ---")
         from agents.cad_builder import CADBuilderAgent
         cad_agent = CADBuilderAgent(output_dir=self.output_dir)
         step_path = cad_agent.generate_domain_step(
@@ -349,7 +349,7 @@ class GeometryAgent:
             name=self.name
         )
 
-        # ── Summary ───────────────────────────────────────────────────────
+        # --- Summary -------------------------------------------------------
         self.logger.info("=" * 60)
         self.logger.info("  GEOMETRY AGENT — Processing complete")
         self.logger.info(f"  Airfoil      : {self.name}")
@@ -370,7 +370,7 @@ class GeometryAgent:
             "n_points_per_surface": n_points,
         }
 
-# ─── CLI entrypoint ─────────────────────────────────────────────────────────
+# --- CLI entrypoint ---------------------------------------------------------
 if __name__ == "__main__":
     import argparse
 
@@ -386,8 +386,8 @@ if __name__ == "__main__":
         help="Chord length in metres (default: 1.0).",
     )
     parser.add_argument(
-        "--output-dir", default="data/raw",
-        help="Output directory for cleaned files (default: data/raw).",
+        "--output-dir", default="data/geometry",
+        help="Output directory for cleaned files (default: data/geometry).",
     )
     parser.add_argument(
         "--points", type=int, default=150,

@@ -13,7 +13,7 @@ import subprocess
 import logging
 
 class MeshAgent:
-    def __init__(self, output_dir: str = "data/raw"):
+    def __init__(self, output_dir: str = "data/mesh"):
         self.output_dir = output_dir
         self.logger = logging.getLogger("MeshAgent")
         os.makedirs(output_dir, exist_ok=True)
@@ -96,6 +96,15 @@ class MeshAgent:
         step_fixed = step_path.replace("\\", "/")
         mesh_fixed = mesh_path.replace("\\", "/")
         
+        # Define local vars for the f-string interpolation
+        bl_layers = params["bl_layers"]
+        bl_ratio = params["bl_ratio"]
+        
+        # Use local paths to avoid space-related TUI parsing errors
+        step_local = os.path.basename(step_path)
+        mesh_local = os.path.basename(mesh_path)
+        work_dir = os.path.dirname(os.path.abspath(script_path))
+        
         script_content = f"""import os
 import sys
 import ansys.fluent.core as pyfluent
@@ -103,42 +112,33 @@ import ansys.fluent.core as pyfluent
 def main():
     try:
         from ansys.fluent.core import launch_fluent, FluentMode, Precision, Dimension
+        import os
+        os.environ["ANSYS_NO_WINDOWS_USER_AUTH"] = "1"
+        os.environ["PYFLUENT_START_INSTANCE"] = "1"
+
+        # 1. Set the Python process directory first
+        os.chdir(r"{work_dir}") 
+
+        # 2. Remove 'working_directory' from the launch call
         meshing = launch_fluent(
             mode=FluentMode.MESHING,
             dimension=Dimension.THREE,
             precision=Precision.DOUBLE,
             processor_count=4
         )
-        
-        # ── NATIVE PYFLUENT API ─────────────
-        # Since we initialized in 3D Mode, the `meshing.tui` objects 
-        # operate smoothly without the 2D workflow WFTreeView crash.
 
-        print("Importing CAD (STEP)...")
-        meshing.tui.file.import_cad(file_name="{step_fixed}", append="no")
+        # 3. Use the session-level chdir to ensure Fluent is in the right spot
+        # If this fails, use: meshing.tui.file.chdir(r"{work_dir}")
+        try:
+            meshing.chdir(r"{work_dir}")
+        except:
+            pass
 
-        print("Setting up global mesh size...")
-        meshing.tui.mesh.scoped_sizing.create(
-            "global", "curvature", "face", "yes", "no", 
-            "0.001", "0.01", "18.0", "1.2"
-        )
-        meshing.tui.mesh.scoped_sizing.compute()
-
-        print("Applying Boundary Layers...")
-        meshing.tui.mesh.boundary_layer.create(
-            "airfoil_bl", "uniform", "first-aspect-ratio", "5", 
-            "{params['bl_layers']}", "{params['bl_ratio']}", "zone", "*"
-        )
-
-        print(f"Generating 2D Surface Mesh...")
-        # Pure 2D simulation must use surface-mesh, NOT volume-mesh.
-        meshing.tui.mesh.surface_mesh.create()
-
-        print("Exporting Mesh...")
-        meshing.tui.file.write_mesh("{mesh_fixed}")
-        
-        meshing.exit()
-        print("MESH_SUCCESS")
+        # ── HYBRID SCHEME INJECTION (UNIVERSAL FLUENT API) ─────────────
+        def send_tui(cmd_str):
+            # No changes needed here, your TUI logic is solid
+            escaped_cmd = cmd_str.replace('"', '\\\\"')
+            meshing.scheme.eval(f'(ti-menu-load-string "{{escaped_cmd}}")')
         
     except Exception as e:
         print(f"MESH_ERROR: {{str(e)}}")

@@ -76,18 +76,26 @@ def download_test_airfoil(output_dir: str) -> str:
 
 def main():
     """Run the full CFD pipeline and report pass/fail for each step."""
-    output_dir = "data/raw"
-    output_csv = os.path.join(output_dir, "pressure_dist.csv")
-    mesh_path = "airfoil_2d.msh.h5"
-
+    # Integrate Cleanup Manager for directory management
+    from scripts.manage_files import CleanupManager
+    CleanupManager.bootstrap() # Ensure directories exist and organize any loose files
+    
+    output_dir_geo = "data/geometry"
+    output_dir_mesh = "data/mesh"
+    output_csv = "data/results/pressure_dist.csv"
+    
     print("=" * 60)
     print("  CFD Integration Test — Full Pipeline")
     print("=" * 60)
 
     # ── Step 1: Download & Preprocess (Geometry Agent) ─────────────────────
     print("\n[1/6] Downloading & preprocessing airfoil geometry...")
-    dat_path = download_test_airfoil(output_dir)
-    geo_agent = GeometryAgent(dat_path=dat_path, chord_m=1.0, output_dir=output_dir)
+    # Use a specific input folder for raw data
+    input_dir = "data/airfoils"
+    os.makedirs(input_dir, exist_ok=True)
+    dat_path = download_test_airfoil(input_dir)
+    
+    geo_agent = GeometryAgent(dat_path=dat_path, chord_m=1.0, output_dir=output_dir_geo)
     geo_result = geo_agent.process(n_points=150)
     print(f"  PASS: Geometry Agent generated CAD at {geo_result['step_path']}")
 
@@ -97,7 +105,7 @@ def main():
     # ── Step 2: Mesh Generation Agent ──────────────────────────────────────
     print("\n[2/6] Generating Agentic Mesh Sequence...")
     from agents.mesh_agent import MeshAgent
-    mesh_agent = MeshAgent(output_dir=output_dir)
+    mesh_agent = MeshAgent(output_dir=output_dir_mesh)
     
     mesh_path = mesh_agent.generate_mesh(
         step_path=geo_result["step_path"],
@@ -119,7 +127,7 @@ def main():
     fluidist = FluidistAgent(show_gui=False)
     
     # Load the pure mesh natively instead of processing DXFs
-    fluidist.solver.file.read_mesh(file_name=mesh_path, file_type="mesh")
+    fluidist.solver.settings.file.read_case(file_name=mesh_path)
     
     print("  PASS: Fluent solver launched and Mesh Loaded.")
 
@@ -139,6 +147,9 @@ def main():
 
     # ── Clean up ───────────────────────────────────────────────────────────
     fluidist.close()
+    
+    # Final project cleanup and pruning
+    CleanupManager.bootstrap()
 
     # ── Validation ─────────────────────────────────────────────────────────
     print("\n" + "=" * 60)
