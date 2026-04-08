@@ -14,6 +14,10 @@ Prerequisites:
 
 import os
 import csv
+
+os.environ["ANSYS_NO_WINDOWS_USER_AUTH"] = "1"
+os.environ["ANSYSLI_NO_USER_CHECK"] = "1"
+
 import ansys.fluent.core as pyfluent
 from ansys.fluent.core import ScalarFieldDataRequest, SurfaceDataType, SurfaceFieldDataRequest
 
@@ -45,8 +49,9 @@ class FluidistAgent:
             mode=pyfluent.FluentMode.SOLVER,
             dimension=pyfluent.Dimension.TWO,
             precision=pyfluent.Precision.DOUBLE,
-            processor_count=4,
+            processor_count=1,
             ui_mode=pyfluent.UIMode.GUI if show_gui else pyfluent.UIMode.NO_GUI,
+            additional_arguments="-nwnua",
         )
 
         # Quick health check — raises if gRPC connection to Fluent is broken.
@@ -218,13 +223,17 @@ class FluidistAgent:
 
 # ─── Quick smoke-test when run directly ─────────────────────────────────────
 if __name__ == "__main__":
-    # Example NACA 0012-ish coords in Meters — just four points for a stub test.
-    # In reality you would pass hundreds of profile points.
-    sample_coords = [(0.0, 0.0), (0.5, 0.08), (1.0, 0.0), (0.5, -0.08)]
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mesh", required=True, help="Path to .msh.h5 file")
+    parser.add_argument("--velocity", type=float, default=50.0)
+    parser.add_argument("--iterations", type=int, default=300)
+    parser.add_argument("--output", default="data/results/pressure_dist.csv")
+    args = parser.parse_args()
 
     agent = FluidistAgent(show_gui=False)
-    agent.generate_or_load_mesh(sample_coords)
-    agent.set_boundary_conditions(inlet_velocity=50.0)  # 50 m/s freestream
-    agent.run_simulation(iterations=300)
-    agent.export_pressure_csv()
+    agent.solver.settings.file.read_case(file_name=args.mesh)
+    agent.set_boundary_conditions(inlet_velocity=args.velocity)
+    agent.run_simulation(iterations=args.iterations)
+    agent.export_pressure_csv(output_path=args.output)
     agent.close()
