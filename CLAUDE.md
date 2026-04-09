@@ -208,6 +208,22 @@ Fluent requires every face to list `(n0 n1 cr cl)` where `cr` = the fluid cell t
 
 ---
 
+## Maintaining CLAUDE.md and STATUS.md
+
+At the end of every chat session, before closing:
+
+1. Read `STATUS.md` and update the relevant agent's status line if anything changed (stage confirmed working, new blocker found, stage completed).
+2. Update `CLAUDE.md` only if the session produced something a future session would need that isn't obvious from reading the code:
+   - A new gotcha (bug, wrong API call, format issue, license constraint)
+   - A convention change (zone name, file path, method signature)
+   - A stage confirmed fully working end-to-end
+3. Do not add in-progress debugging attempts, "we tried X" notes, or anything that will be resolved in the same session.
+4. Keep CLAUDE.md under ~200 lines of content. If a section grows, compress it.
+
+If you are mid-session and discover something that contradicts CLAUDE.md (wrong API, changed file path, etc.), fix CLAUDE.md immediately — do not wait until the end.
+
+---
+
 ## Current Focus: Base Case Pipeline
 
 The immediate goal is to prove the full pipeline runs end-to-end for one hardcoded airfoil (NACA 001234) and produces `data/results/pressure_dist.csv`. No agent generalisation, no parameter sweeps — just one working run.
