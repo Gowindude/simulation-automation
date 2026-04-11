@@ -2,11 +2,11 @@
 
 ## Project Overview
 
-Autonomous Design Evaluator (ADE): a 6-agent pipeline that runs high-fidelity CFD and FEA simulations on NACA airfoil shapes, collects the results as training data, and uses them to train a Physics-Informed Neural Network (PINN). The PINN eventually acts as a fast surrogate model — predicting aerodynamic and structural performance for any airfoil without running a full simulation each time. The lead agent uses the PINN to search the design space and only calls Ansys to verify the best candidates.
+Autonomous Design Evaluator (ADE): a 6-agent pipeline that runs high-fidelity CFD and FEA simulations on NACA airfoil shapes, collects the results as training data, and uses them to train a Physics-Informed Neural Network (PINN). The PINN acts as a fast surrogate model — predicting aerodynamic and structural performance for any airfoil without running a full simulation. The lead agent uses the PINN to search the design space and only calls Ansys to verify the best candidates.
 
-The pipeline processes a single airfoil as: `.dat` → cleaned geometry → CAD STEP → gmsh mesh → Fluent ASCII MSH → CFD solve → pressure CSV → (FEA) → PINN training data.
+Pipeline: `.dat` → cleaned geometry → CAD STEP → gmsh mesh → Fluent ASCII MSH → CFD solve → pressure CSV → FEA → PINN training data.
 
-Current status: Agents 1–2 are implemented. Agents 3–6 are not yet built.
+Read `STATUS.md` for current per-agent status and known blockers.
 
 ---
 
@@ -14,14 +14,14 @@ Current status: Agents 1–2 are implemented. Agents 3–6 are not yet built.
 
 | # | Name | Role | Status | Entry Point |
 |---|------|------|--------|-------------|
-| 1 | Librarian | Downloads/generates NACA .dat files from UIUC or naca_gen.py | Working | `data/airfoil_downloader.py` |
-| 2 | Fluidist (CFD Lead) | Geometry → mesh → Fluent CFD solve → pressure CSV | In progress | `agents/geometry_agent.py`, `agents/mesh_agent.py`, `physics_cores/ansys_fluent/cfd_tool.py` |
-| 3 | Structuralist (FEA Lead) | Maps pressure from Fluidist onto structural model via PyMechanical | Not built | `physics_cores/ansys_mech/` |
+| 1 | Librarian | Downloads/generates NACA .dat files | Working | `data/airfoil_downloader.py` |
+| 2 | Fluidist (CFD Lead) | Geometry → mesh → Fluent CFD → pressure CSV | In progress | `agents/geometry_agent.py`, `agents/mesh_agent.py`, `physics_cores/ansys_fluent/cfd_tool.py` |
+| 3 | Structuralist (FEA Lead) | Maps pressure onto structural model via PyMechanical | Not built | `physics_cores/ansys_mech/` |
 | 4 | Surrogate (PINN Trainer) | Trains DeepXDE/PyTorch PINN on CFD+FEA outputs | Not built | TBD |
-| 5 | Troubleshooter | Monitors logs, interprets divergence, instructs Fluidist to retry | Not built | TBD |
-| 6 | Lead (Orchestrator) | Uses PINN predictions to decide which shapes to verify in Ansys | Not built | TBD |
+| 5 | Troubleshooter | Monitors logs, interprets divergence, retries | Not built | TBD |
+| 6 | Lead (Orchestrator) | Uses PINN to decide which shapes to verify | Not built | TBD |
 
-Agents pass a **Design Dictionary** between each other. Minimum keys in that dict:
+Agents pass a **Design Dictionary** between each other:
 ```python
 {
     "name": "naca001234",
@@ -39,17 +39,19 @@ Agents pass a **Design Dictionary** between each other. Minimum keys in that dic
 | Tool | Version | Purpose |
 |------|---------|---------|
 | Python | 3.13 (MS Store) | Runtime |
-| ansys-fluent-core (PyFluent) | latest | Fluent solver automation |
+| ansys-fluent-core (PyFluent) | 0.20+ | Fluent solver automation |
 | gmsh | 4.15.2 | Open-source meshing (replaces Fluent Meshing) |
 | meshio | 5.3.5 | Read gmsh MSH files in the converter |
 | build123d | latest | OpenCASCADE-based CAD for domain STEP generation |
 | numpy / scipy | latest | Geometry preprocessing |
-| DeepXDE / PyTorch | TBD | PINN training (Agent 4, not yet built) |
-| Ansys Fluent | 2025 R2 Student | Solver only (meshing mode blocked by Student license) |
+| DeepXDE | latest | PINN training (Agent 4) |
+| PyTorch | 2.0+ | DeepXDE backend (preferred over TF) |
+| LangGraph | 0.1+ | Agent orchestration state machine (Agent 6) |
+| Ansys Fluent | 2025 R2 Student | Solver only (meshing mode blocked) |
 | Ansys Mechanical | Student | FEA (Agent 3, not yet built) |
 
-Python venv is at `.venv/` — always activate before running anything:
 ```bash
+# Always activate venv first
 .venv/Scripts/activate
 python run_cfd_test.py
 ```
@@ -60,62 +62,53 @@ python run_cfd_test.py
 
 ```
 simulation-automation/
-├── CLAUDE.md                       # this file
-├── run_cfd_test.py                 # end-to-end integration test (the base-case pipeline)
+├── CLAUDE.md                       # this file — read at start of every session
+├── STATUS.md                       # per-agent pipeline status — update at end of session
+├── run_cfd_test.py                 # end-to-end integration test
 │
 ├── agents/
-│   ├── geometry_agent.py           # Agent 1+2a: cleans .dat, applies cosine spacing, calls CAD builder
-│   ├── cad_builder.py              # Agent 2b: build123d C-domain STEP with airfoil hole
-│   └── mesh_agent.py               # Agent 2c: gmsh meshing + Fluent ASCII MSH converter
+│   ├── geometry_agent.py           # cleans .dat, cosine spacing, calls CAD builder
+│   ├── cad_builder.py              # build123d C-domain STEP with airfoil hole
+│   └── mesh_agent.py               # gmsh meshing + Fluent ASCII MSH converter
 │
 ├── physics_cores/
 │   ├── ansys_fluent/
-│   │   ├── cfd_tool.py             # FluidistAgent: Fluent launch, BCs, solve, CSV export
-│   │   └── mesh_airfoil.py         # Legacy: Fluent meshing workflow (blocked by Student license, kept for reference)
-│   └── ansys_mech/                 # Agent 3 placeholder (empty)
+│   │   ├── cfd_tool.py             # FluidistAgent: launch, BCs, solve, CSV export
+│   │   └── mesh_airfoil.py         # Legacy Fluent meshing (Student license blocked — reference only)
+│   └── ansys_mech/                 # Agent 3 placeholder
 │
 ├── data/
-│   ├── airfoils/                   # Input: raw .dat files from UIUC
+│   ├── airfoils/                   # Input: raw .dat files
 │   ├── geometry/                   # Agent 1 output: cleaned CSV, STEP
-│   ├── mesh/                       # Agent 2 output: gmsh .msh, Fluent .msh, generated scripts
-│   ├── fluent_logs/                # Fluent transcript (.trn) and error logs
+│   ├── mesh/                       # Agent 2 output: gmsh .msh, Fluent .msh, scripts
+│   ├── fluent_logs/                # Fluent transcripts (.trn)
 │   ├── results/                    # CFD output: pressure_dist.csv
-│   └── raw/                        # Deprecated staging area (managed by CleanupManager)
+│   └── raw/                        # Deprecated staging (managed by CleanupManager)
 │
 └── scripts/
-    └── manage_files.py             # CleanupManager: bootstraps dirs, organises loose files
+    └── manage_files.py             # CleanupManager: bootstraps dirs, organises files
 ```
 
-Generated files that are NOT committed (see .gitignore): `data/mesh/*.msh`, `data/results/`, `data/fluent_logs/*.trn`, `*.trn` in root.
+Generated files not committed: `data/mesh/*.msh`, `data/results/`, `data/fluent_logs/*.trn`.
 
 ---
 
 ## Rules & Conventions
 
-**Naming:**
-- Variables use `snake_case`. Agent class names use `PascalCase` (e.g. `MeshAgent`, `FluidistAgent`).
-- Airfoil names are lowercase with no spaces: `naca001234`, `naca0012`.
-- All intermediate files are named `{airfoil_name}_{type}.{ext}` (e.g. `naca001234_domain.step`, `naca001234_2d_fluent.msh`).
-- Fluent zone names are fixed: `inlet`, `outlet`, `airfoil`, `symmetry_top`, `symmetry_bottom`, `fluid`, `interior`. Do not rename these — they are hardcoded in both mesh generation and `cfd_tool.py` BC setup.
+**Naming:** `snake_case` variables, `PascalCase` agent classes. Airfoil names lowercase: `naca0012`. Files: `{name}_{type}.{ext}`. Fluent zone names are fixed (hardcoded in mesh generation and `cfd_tool.py`): `inlet`, `outlet`, `airfoil`, `symmetry_top`, `symmetry_bottom`, `fluid`, `interior`.
 
-**Comments:**
-- Plain text only. No markdown, no emoji, no `#---` decorative lines in inline comments.
-- Comments explain the *why*, not the *what*. Obvious code gets no comment.
-- Docstrings on all public methods. One-line summary, then Args/Returns if non-trivial.
+**Comments:** Plain text only. Explain the *why*, not the *what*. Docstrings on all public methods.
 
-**Units:**
-- Everything is SI throughout: metres, m/s, Pascals. Normalised airfoil coords (x/c, y/c) are explicitly labelled and converted to metres before any solver call.
+**Units:** SI throughout — metres, m/s, Pascals. Normalised airfoil coords (x/c, y/c) must be converted to metres before any solver call.
 
-**Error handling:**
-- Agents raise `RuntimeError` on unrecoverable failures. No silent `except: pass` blocks.
-- Subprocess calls (gmsh) check `returncode` and scan stdout for `MESH_SUCCESS` / `MESH_ERROR` sentinel strings.
+**Errors:** Agents raise `RuntimeError` on unrecoverable failures. No silent `except: pass`. Subprocess calls check `returncode` and scan stdout for `MESH_SUCCESS` / `MESH_ERROR`.
 
 ---
 
 ## Common Commands
 
 ```bash
-# Full pipeline (geometry → mesh → CFD solve → CSV)
+# Full pipeline
 python run_cfd_test.py
 
 # Mesh agent only (skip geometry, use existing STEP)
@@ -124,10 +117,10 @@ python agents/mesh_agent.py --step data/geometry/naca001234_domain.step --name n
 # CAD only
 python agents/cad_builder.py --csv data/geometry/naca001234_cleaned.csv --name naca001234
 
-# Fluent solver only (load existing mesh, run, export)
+# Fluent solver only
 python physics_cores/ansys_fluent/cfd_tool.py --mesh data/mesh/naca001234_2d_fluent.msh
 
-# Check a Fluent transcript for errors
+# Scan Fluent transcripts for errors
 grep -i "error\|warning\|null domain" data/fluent_logs/*.trn
 ```
 
@@ -135,99 +128,168 @@ grep -i "error\|warning\|null domain" data/fluent_logs/*.trn
 
 ## Debugging Gotchas
 
-These are issues that have already burned time. Do not repeat them.
-
 ### Ansys Student License Constraints
-- **Meshing mode is completely blocked.** `FluentMode.MESHING` exits immediately with "Mesher mode is not supported - Starting Solver mode." The solution is gmsh for all meshing. `mesh_airfoil.py` is kept for reference only.
-- **Only 1 solver core allowed.** `processor_count=4` causes a `BAD TERMINATION / SIGSEGV` in `Auto_Partition` because the MPI partitioner fails on gmsh-origin meshes. Always use `processor_count=1`.
-- **License is tied to a specific Windows user account.** Run all scripts from the account that installed Ansys Student. Running elevated (admin UAC) or from a different user causes silent license checkout failures.
+- **Meshing mode is completely blocked.** `FluentMode.MESHING` exits immediately. Use gmsh for all meshing. `mesh_airfoil.py` is reference only.
+- **Only 1 solver core.** `processor_count=4` causes `BAD TERMINATION / SIGSEGV` in `Auto_Partition`. Always `processor_count=1`.
+- **License is tied to a specific Windows user.** Running elevated (admin UAC) or from a different user causes silent license failures.
 
 ### WNUA (Windows Network User Authentication)
-PyFluent launches Fluent as a subprocess; WNUA blocks gRPC communication between them when the process user differs from the Windows session user. Three bypasses are required together — if any one is missing, Fluent may launch but PyFluent can't connect:
-1. `os.environ["ANSYS_NO_WINDOWS_USER_AUTH"] = "1"` — set in `cfd_tool.py` before `import ansys.fluent.core`
+All three bypasses are required together. Missing any one causes Fluent to launch but PyFluent can't connect:
+1. `os.environ["ANSYS_NO_WINDOWS_USER_AUTH"] = "1"` — in `cfd_tool.py` before the import
 2. `os.environ["ANSYSLI_NO_USER_CHECK"] = "1"` — same location
-3. `additional_arguments="-nwnua"` — passed to `pyfluent.launch_fluent()`
+3. `additional_arguments="-nwnua"` — in `launch_fluent()`
 
-The "ACCESS DENIED" messages that appear at Fluent shutdown (`ANSYS Product Improvement Program`) are benign telemetry failures, not solve errors.
+Shutdown "ACCESS DENIED" messages (`ANSYS Product Improvement Program`) are benign telemetry, not solver errors.
 
 ### gmsh STEP Import
-- Use `gmsh.model.occ.importShapes(path)` + `occ.synchronize()` to load a STEP file. This preserves B-rep topology.
-- Do NOT use `gmsh.merge()` + `classifySurfaces()`. Those only work on triangulated/tessellated surfaces, not analytical STEP B-rep. They silently load 0 curves and produce an unmeshed domain.
+- Use `gmsh.model.occ.importShapes(path)` + `occ.synchronize()`. This preserves B-rep topology.
+- Do NOT use `gmsh.merge()` + `classifySurfaces()` — those only work on tessellated surfaces, silently load 0 curves.
 - `gmsh.model.mesh.checkMesh()` does not exist in gmsh 4.15 — remove any call to it.
 
-### Fluent 2D and the gmsh MSH Format
-Fluent 2D cannot read gmsh MSH files directly. Two reasons:
-1. gmsh MSH has no dimension declaration. Fluent 2D needs `(2 2)` in the header or it raises "Null Domain Pointer."
-2. gmsh always writes 3D node coordinates `(x y z)` even for flat 2D meshes. Fluent 2D rejects this.
+### Fluent ASCII MSH Format (Critical)
+Fluent 2D cannot read gmsh MSH directly — no `(2 2)` header, 3D coordinates. `MeshAgent._convert_to_fluent_msh()` writes the native format. Three rules that have already caused crashes:
 
-The fix is `MeshAgent._convert_to_fluent_msh()`, which reads the gmsh MSH with meshio and writes a native Fluent ASCII MSH with the correct header, 2D node coords, typed mixed cell zone, face-cell adjacency, and BC-typed boundary zones.
+**1. All integers must be hexadecimal.** This includes counts, first/last indices, zone IDs, face data (`n0 n1 cr cl`), and element type codes. Decimal values cause "unable to read coordinates of node N" parse overflow.
 
-Fluent ASCII MSH section structure (in order):
-```
-(0 "comment")
-(2 2)                          <- dimension: 2D
-(10 (0 1 N 0 2))               <- node header (N = total node count)
-(10 (zone_id first last 1 2)(  <- node data
-  x y
-  ...
-))
-(12 (0 1 Nc 0))                <- cell header
-(12 (zone_id 1 Nc 1 0)(        <- mixed cell zone (type 0 = mixed)
-  1                            <- 1 = triangle
-  3                            <- 3 = quad
-  ...
-))
-(13 (0 1 Nf 0 0))              <- face header
-(13 (zone_id first last bc 2)( <- boundary face zone; bc is hex e.g. 14 = velocity-inlet
-  n0 n1 cr cl                  <- 1-based node indices; cr=fluid cell, cl=0 for boundary
-  ...
-))
-(13 (zone_id first last 2 2)(  <- interior faces; bc=2
-  ...
-))
-(45 (zone_id type name)())     <- zone descriptors
-```
+**2. The data block `(` must open on the same line as the section header.** Write `(10 (1 1 N 1 2)(\n` not `(10 (1 1 N 1 2)\n(\n`. A bare `(` on its own line causes "Build Grid: Aborted due to critical error" + SIGSEGV.
 
-Fluent BC type codes: `0x14`=velocity-inlet, `0x9`=pressure-outlet, `0x7`=symmetry, `0x3`=wall, `0x2`=interior.
+**3. Face-cell adjacency orientation.** `cr` = fluid cell to the right of directed edge `n0→n1`, `cl` = 0 for boundary. If the cell's stored half-edge goes `n0→n1`, the cell is on the left — reverse the edge.
 
-### PyFluent TUI — Reading a Mesh File
-`solver.tui.file.read_mesh()` does not exist in PyFluent. Use either:
+Section order: `(2 2)` → `(10 ...)` nodes → `(12 ...)` cells → `(13 ...)` faces → `(45 ...)` zone descriptors.
+
+BC type hex codes: `0x14`=velocity-inlet, `0x9`=pressure-outlet, `0x7`=symmetry, `0x3`=wall, `0x2`=interior.
+
+### PyFluent API
+**Loading a mesh:** `solver.tui.file.read_mesh()` does not exist. Use:
 ```python
-solver.tui.file.read_case(mesh_path)      # TUI wrapper (accepts .msh extension)
-solver.settings.file.read_case(file_name=mesh_path)  # settings API
+solver.settings.file.read_case(file_name=mesh_path)   # preferred
+solver.tui.file.read_case(mesh_path)                   # also works
 ```
 
-### Windows Paths in Generated Python Scripts
-When `mesh_agent.py` writes a gmsh script to disk and embeds file paths as string literals, backslashes cause `SyntaxError: (unicode error) 'unicodeescape'`. Fix: convert all paths to forward slashes before embedding:
+**Field data (PyFluent 0.20+):** `SurfaceFieldDataRequest` and `ScalarFieldDataRequest` were removed. Use:
+```python
+from ansys.fluent.core import SurfaceDataType
+
+field_data = solver.fields.field_data
+centroid_data = field_data.get_surface_data(
+    surface_names=["airfoil"], data_type=SurfaceDataType.FacesCentroid
+)
+pressure_data = field_data.get_scalar_field_data(
+    field_name="pressure", surface_names=["airfoil"]
+)
+# Both return dict keyed by zone ID (int), not zone name
+centroids = next(iter(centroid_data.values()))
+pressures = next(iter(pressure_data.values()))
+```
+
+The Fluent internal field name for gauge static pressure is `"pressure"`, not `"static-pressure"`.
+
+**Boundary conditions:**
+```python
+setup = solver.settings.setup
+setup.models.viscous.model = "k-omega"
+setup.models.viscous.k_omega_model = "sst"
+inlet = setup.boundary_conditions.velocity_inlet["inlet"]
+inlet.momentum.velocity_magnitude.value = 50.0
+```
+
+### Windows Paths in Generated Scripts
+Backslashes in string literals cause `SyntaxError: unicodeescape`. Always convert before embedding in generated scripts:
 ```python
 step_fwd = step_path.replace("\\", "/")
 ```
 
-### Face-Cell Adjacency in the MSH Converter
-Fluent requires every face to list `(n0 n1 cr cl)` where `cr` = the fluid cell to the right of the directed edge `n0→n1`, and `cl` = the cell to the left (0 for exterior). Getting the orientation wrong is silent but produces incorrect pressure gradients. The rule: if the cell's stored half-edge goes `n0→n1`, the cell is already to the *left* — reverse the edge so the cell ends up on the *right*.
+---
+
+## Agent 4 — PINN Surrogate (DeepXDE)
+
+Uses PyTorch backend. Set before importing DeepXDE: `os.environ['DDE_BACKEND'] = 'pytorch'`.
+
+**Data-driven training on CFD CSV:**
+```python
+import deepxde as dde, numpy as np, pandas as pd
+
+df = pd.read_csv("data/results/pressure_dist.csv")
+X = df[["x_m", "y_m"]].values.astype(np.float32)
+y = df["pressure_Pa"].values.reshape(-1, 1).astype(np.float32)
+
+bc = dde.icbc.PointSetBC(X, y)
+geom = dde.geometry.Rectangle([-0.5, -1.0], [1.5, 1.0])
+data = dde.data.PDE(geom, pde=None, bcs=[bc], num_domain=0, num_boundary=0)
+
+net = dde.nn.FNN([2, 128, 128, 64, 1], activation="tanh")
+model = dde.Model(data, net)
+model.compile("adam", lr=1e-3)
+model.train(epochs=15000, display_every=500)
+```
+
+Checkpoint during training:
+```python
+ckpt = dde.callbacks.ModelCheckpoint("models/airfoil_pinn", save_better_only=True, period=500)
+model.train(epochs=15000, callbacks=[ckpt])
+```
+
+Inference:
+```python
+import torch
+net = dde.nn.FNN([2, 128, 128, 64, 1], activation="tanh")
+ckpt = torch.load("models/airfoil_pinn-best_loss.pt")
+net.load_state_dict(ckpt["model_state_dict"])
+net.eval()
+```
+
+Normalise inputs to `[-1, 1]` before training. Store the scaler for inference.
+
+---
+
+## Agent 6 — Orchestrator (LangGraph)
+
+LangGraph does NOT require LangChain — `pip install langgraph` only. Nodes are plain Python functions; no LLM required.
+
+```python
+from langgraph.graph import StateGraph, START, END
+from langgraph.types import RetryPolicy
+from typing_extensions import TypedDict
+
+class DesignState(TypedDict):
+    design_dict: dict
+    cfd_converged: bool
+    fea_results: dict
+
+def cfd_node(state: DesignState) -> dict:
+    results = FluidistAgent().run_from_mesh(state["design_dict"]["mesh_path"], ...)
+    return {"cfd_converged": results["converged"], "design_dict": state["design_dict"]}
+
+def route_after_cfd(state: DesignState) -> str:
+    return "fea" if state["cfd_converged"] else "troubleshooter"
+
+graph = StateGraph(DesignState)
+graph.add_node("cfd", cfd_node, retry_policy=RetryPolicy(max_attempts=2))
+graph.add_node("troubleshooter", troubleshooter_node)
+graph.add_node("fea", fea_node)
+graph.add_edge(START, "cfd")
+graph.add_conditional_edges("cfd", route_after_cfd, {"fea": "fea", "troubleshooter": "troubleshooter"})
+graph.add_edge("fea", END)
+
+app = graph.compile()
+result = app.invoke({"design_dict": {...}, "cfd_converged": False, "fea_results": {}})
+```
+
+Router functions return a string (node name). State updates are merged automatically — return only changed keys.
 
 ---
 
 ## Maintaining CLAUDE.md and STATUS.md
 
-At the end of every chat session, before closing:
+At the end of every session:
 
-1. Read `STATUS.md` and update the relevant agent's status line if anything changed (stage confirmed working, new blocker found, stage completed).
-2. Update `CLAUDE.md` only if the session produced something a future session would need that isn't obvious from reading the code:
-   - A new gotcha (bug, wrong API call, format issue, license constraint)
-   - A convention change (zone name, file path, method signature)
-   - A stage confirmed fully working end-to-end
-3. Do not add in-progress debugging attempts, "we tried X" notes, or anything that will be resolved in the same session.
-4. Keep CLAUDE.md under ~200 lines of content. If a section grows, compress it.
-
-If you are mid-session and discover something that contradicts CLAUDE.md (wrong API, changed file path, etc.), fix CLAUDE.md immediately — do not wait until the end.
+1. Update `STATUS.md` — change the relevant agent's status row if anything changed.
+2. Update `CLAUDE.md` only if the session produced a new gotcha, confirmed a stage working end-to-end, or changed a convention/API. Do not add in-progress debugging or "we tried X" notes.
+3. Fix `CLAUDE.md` immediately mid-session if you find it contradicts the actual code.
+4. Keep `CLAUDE.md` under ~250 lines. Compress sections if they grow.
 
 ---
 
-## Current Focus: Base Case Pipeline
+## Current Focus
 
-The immediate goal is to prove the full pipeline runs end-to-end for one hardcoded airfoil (NACA 001234) and produces `data/results/pressure_dist.csv`. No agent generalisation, no parameter sweeps — just one working run.
-
-Test with: `python run_cfd_test.py`
-
-Once that passes, the next step is parameterising `MeshAgent` and `FluidistAgent` so the Lead Agent can hand them arbitrary airfoil names and get results back.
+Prove the pipeline works end-to-end for one hardcoded airfoil (NACA 001234) and produces `data/results/pressure_dist.csv`. Test with: `python run_cfd_test.py`

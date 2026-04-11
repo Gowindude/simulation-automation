@@ -7,8 +7,8 @@ Last updated: 2026-04-09
 | Stage | Agent | Status | Notes |
 |-------|-------|--------|-------|
 | 1 | Librarian (Geometry) | Working | `GeometryAgent` + `CADBuilderAgent` produce `naca001234_domain.step` |
-| 2 | Mesh Agent | Debugging | gmsh meshing works; Fluent ASCII MSH converter written; hex formatting fix applied; awaiting confirmed Fluent load |
-| 3 | Fluidist (CFD) | Not started | `FluidistAgent` class exists in `cfd_tool.py`; `run_from_mesh()` method not yet implemented |
+| 2 | Mesh Agent | Debugging | gmsh meshing works; two converter bugs fixed (hex indices, inline `(`); awaiting confirmed Fluent load |
+| 3 | Fluidist (CFD) | Implemented; unverified | `FluidistAgent.run_from_mesh()` complete; full BC set (inlet/outlet/symmetry); PyFluent 0.20+ field data API; post-solve divergence check; blocked on Fluent MSH load |
 | 4 | Structuralist (FEA) | Not built | `physics_cores/ansys_mech/` placeholder only |
 | 5 | Surrogate (PINN) | Not built | DeepXDE/PyTorch; depends on CFD + FEA output data |
 | 6 | Troubleshooter | Not built | Log monitor + LLM error interpreter |
@@ -16,18 +16,24 @@ Last updated: 2026-04-09
 
 ## Known Blockers
 
-- `run_cfd_test.py:130` — `tui.file.read_mesh` call is broken (method does not exist); needs to be `settings.file.read_case(file_name=...)`. Not yet committed.
-- Fluent load of `naca001234_2d_fluent.msh` not yet manually verified in GUI. Until confirmed, the MSH converter output may still have format issues.
+- Fluent load of `naca001234_2d_fluent.msh` not yet manually verified in GUI. Regenerate the file after the inline-`(` fix before testing.
+
+## MSH Converter Bug History
+
+Two bugs were fixed in `MeshAgent._convert_to_fluent_msh()`:
+
+1. **Decimal integers** — all counts, indices, and face data values (n0, n1, cr, cl) must be hex. Decimal caused "unable to read coordinates of node N" parse overflow.
+2. **Data block `(` on wrong line** — Fluent's parser requires `(section_header)(\n`, not `(section_header)\n(\n`. The bare `(` on its own line caused "Build Grid: Aborted due to critical error" + SIGSEGV.
 
 ## Output Files (Confirmed on Disk)
 
 - `data/geometry/naca001234_domain.step` — C-domain STEP, confirmed valid (gmsh loads it)
 - `data/mesh/naca001234_2d.msh` — gmsh intermediate MSH
-- `data/mesh/naca001234_2d_fluent.msh` — Fluent ASCII MSH (729KB); hex indices applied; not yet Fluent-verified
+- `data/mesh/naca001234_2d_fluent.msh` — Fluent ASCII MSH; regenerate after latest fix before testing
 
 ## Next Actions
 
-1. Open Fluent GUI manually, load `data/mesh/naca001234_2d_fluent.msh`, confirm zones appear
-2. Fix `run_cfd_test.py:130` and commit
-3. Implement `FluidistAgent.run_from_mesh()` in `cfd_tool.py`
-4. Run full pipeline, confirm `data/results/pressure_dist.csv` is produced
+1. Delete stale `data/mesh/naca001234_2d_fluent.msh`, regenerate with `python agents/mesh_agent.py --step data/geometry/naca001234_domain.step --name naca001234`
+2. Open Fluent GUI in **2D Double Precision** mode, load the new MSH via File > Read > Mesh, confirm zones appear (inlet, outlet, airfoil, symmetry_top, symmetry_bottom)
+3. If MSH loads cleanly: run `python run_cfd_test.py`, confirm `data/results/pressure_dist.csv` is produced
+4. If MSH load fails: debug `MeshAgent._convert_to_fluent_msh()` — check zone type codes and face-cell adjacency orientation
