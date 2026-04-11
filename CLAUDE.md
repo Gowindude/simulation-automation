@@ -162,35 +162,37 @@ BC type hex codes: `0x14`=velocity-inlet, `0x9`=pressure-outlet, `0x7`=symmetry,
 ### PyFluent API
 **Loading a mesh:** `solver.tui.file.read_mesh()` does not exist. Use:
 ```python
-solver.settings.file.read_case(file_name=mesh_path)   # preferred
-solver.tui.file.read_case(mesh_path)                   # also works
+solver.file.read_mesh(file_name=mesh_path)    # Settings API — preferred
+solver.tui.file.read_case(mesh_path)           # TUI — also works
+# Note: solver.settings.file.read_case() does NOT exist
 ```
 
-**Field data (PyFluent 0.20+):** `SurfaceFieldDataRequest` and `ScalarFieldDataRequest` were removed. Use:
+**Field data:** `SurfaceFieldDataRequest` and `ScalarFieldDataRequest` moved to a submodule — import from there, not from `ansys.fluent.core` directly (that raises `ImportError`):
 ```python
-from ansys.fluent.core import SurfaceDataType
+from ansys.fluent.core.field_data_interfaces import (
+    SurfaceFieldDataRequest, ScalarFieldDataRequest, SurfaceDataType
+)
 
 field_data = solver.fields.field_data
-centroid_data = field_data.get_surface_data(
-    surface_names=["airfoil"], data_type=SurfaceDataType.FacesCentroid
+batch = field_data.new_batch()
+batch.add_requests(
+    SurfaceFieldDataRequest(data_types=[SurfaceDataType.FacesCentroid], surfaces=["airfoil"]),
+    ScalarFieldDataRequest(field_name="pressure", surfaces=["airfoil"])
 )
-pressure_data = field_data.get_scalar_field_data(
-    field_name="pressure", surface_names=["airfoil"]
-)
-# Both return dict keyed by zone ID (int), not zone name
-centroids = next(iter(centroid_data.values()))
-pressures = next(iter(pressure_data.values()))
+response = batch.get_response()
+centroids = response.get_field_data(surface_request)["airfoil"].face_centroids
+pressures = response.get_field_data(pressure_request)["airfoil"]
 ```
 
-The Fluent internal field name for gauge static pressure is `"pressure"`, not `"static-pressure"`.
+Use `add_requests()` — `add_surfaces_request()` is deprecated. The Fluent field name for gauge static pressure is `"pressure"`, not `"static-pressure"`.
 
 **Boundary conditions:**
 ```python
 setup = solver.settings.setup
-setup.models.viscous.model = "k-omega"
-setup.models.viscous.k_omega_model = "sst"
+setup.models.viscous.model.set_state("k-omega")
+setup.models.viscous.k_omega_model.set_state("sst")
 inlet = setup.boundary_conditions.velocity_inlet["inlet"]
-inlet.momentum.velocity_magnitude.value = 50.0
+inlet.momentum.velocity_magnitude.set_state(50.0)
 ```
 
 ### Windows Paths in Generated Scripts
