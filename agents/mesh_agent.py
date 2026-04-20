@@ -151,12 +151,14 @@ class MeshAgent:
                 key = (min(n0, n1), max(n0, n1))
                 edge_cells[key].append((cid, n0, n1))
 
-        # Interior faces — edges shared by exactly 2 cells
+        # Interior faces — edges shared by exactly 2 cells.
+        # n0, n1 come from c0's directed half-edge. Fluent volume reconstruction
+        # requires c0 (the cell that owns n0→n1) in position 3 (cr).
         interior = []
         for key, adj in edge_cells.items():
             if len(adj) == 2:
                 (c0, n0, n1), (c1, _, _) = adj
-                interior.append((n0 + 1, n1 + 1, c0 + 1, c1 + 1))  # 1-based
+                interior.append((n0 + 1, n1 + 1, c0 + 1, c1 + 1))  # 1-based; cr=c0
 
         # Boundary faces — match each boundary edge to its adjacent cell
         # Convention: cr = fluid cell, cl = 0 (exterior)
@@ -183,8 +185,8 @@ class MeshAgent:
 
         # Fluent BC type codes (hex) and zone type strings
         BC_CODE = {
-            "inlet":            0x14,   # velocity-inlet
-            "outlet":           0x9,    # pressure-outlet
+            "inlet":            0xa,    # velocity-inlet (0x14 is mass-flow-inlet — wrong)
+            "outlet":           0x5,    # pressure-outlet (0x9 is pressure-far-field — wrong)
             "symmetry_top":     0x7,    # symmetry
             "symmetry_bottom":  0x7,
             "airfoil":          0x3,    # wall
@@ -211,26 +213,30 @@ class MeshAgent:
             out.write("(2 2)\n\n")   # 2D declaration
 
             # --- Nodes ---
-            out.write(f"(10 (0 1 {N} 0 2))\n")
-            out.write(f"(10 (1 1 {N} 1 2)\n(\n")
+            # All count/index integers in Fluent MSH section headers are hexadecimal.
+            out.write(f"(10 (0 1 {N:x} 0 2))\n")
+            # Data block ( must open on the same line as the section header;
+            # Fluent's MSH parser is line-oriented and does not tolerate a bare (
+            # on its own line after the header closing ).
+            out.write(f"(10 (1 1 {N:x} 1 2)(\n")
             for x, y in nodes:
                 out.write(f"{x:.10e} {y:.10e}\n")
             out.write("))\n\n")
 
             # --- Cells ---
-            out.write(f"(12 (0 1 {Nc} 0))\n")
+            out.write(f"(12 (0 1 {Nc:x} 0))\n")
             unique_etypes = set(cell_ftypes)
             if len(unique_etypes) == 1:
-                out.write(f"(12 ({zone_id['fluid']} 1 {Nc} 1 {cell_ftypes[0]}))\n\n")
+                out.write(f"(12 ({zone_id['fluid']:x} 1 {Nc:x} 1 {cell_ftypes[0]:x}))\n\n")
             else:
                 # Mixed mesh (tri + quad from BL) — list element types explicitly
-                out.write(f"(12 ({zone_id['fluid']} 1 {Nc} 1 0)\n(\n")
+                out.write(f"(12 ({zone_id['fluid']:x} 1 {Nc:x} 1 0)(\n")
                 for ct in cell_ftypes:
-                    out.write(f"{ct}\n")
+                    out.write(f"{ct:x}\n")
                 out.write("))\n\n")
 
             # --- Faces header ---
-            out.write(f"(13 (0 1 {total_faces} 0 0))\n")
+            out.write(f"(13 (0 1 {total_faces:x} 0 0))\n")
 
             # Boundary face zones
             fc = 1
@@ -240,26 +246,26 @@ class MeshAgent:
                 bc  = BC_CODE.get(zn, 0x3)
                 zid = zone_id[zn]
                 first, last = fc, fc + len(faces) - 1
-                out.write(f"(13 ({zid} {first} {last} {bc:x} 2)\n(\n")
+                out.write(f"(13 ({zid:x} {first:x} {last:x} {bc:x} 2)(\n")
                 for n0, n1, cr, cl in faces:
-                    out.write(f"{n0} {n1} {cr} {cl}\n")
+                    out.write(f"{n0:x} {n1:x} {cr:x} {cl:x}\n")
                 out.write("))\n\n")
                 fc = last + 1
 
             # Interior face zone
             zid_int = zone_id["interior"]
             first, last = fc, fc + len(interior) - 1
-            out.write(f"(13 ({zid_int} {first} {last} 2 2)\n(\n")
+            out.write(f"(13 ({zid_int:x} {first:x} {last:x} 2 2)(\n")
             for n0, n1, cr, cl in interior:
-                out.write(f"{n0} {n1} {cr} {cl}\n")
+                out.write(f"{n0:x} {n1:x} {cr:x} {cl:x}\n")
             out.write("))\n\n")
 
             # --- Zone info (45 sections) ---
-            out.write(f"(45 ({zone_id['fluid']} fluid fluid)())\n")
+            out.write(f"(45 ({zone_id['fluid']:x} fluid fluid)())\n")
             for zn in bnd_names:
                 ft = FLUENT_TYPE.get(zn, "wall")
-                out.write(f"(45 ({zone_id[zn]} {ft} {zn})())\n")
-            out.write(f"(45 ({zone_id['interior']} interior interior)())\n")
+                out.write(f"(45 ({zone_id[zn]:x} {ft} {zn})())\n")
+            out.write(f"(45 ({zone_id['interior']:x} interior interior)())\n")
 
         self.logger.info(
             f"  Converter: {Nc} cells ({cell_ftypes.count(1)} tri + "

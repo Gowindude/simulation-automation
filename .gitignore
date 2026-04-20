@@ -33,3 +33,14 @@ tmp_check.txt
 *.swp
 Thumbs.db
 .DS_Store
+
+# ─── Generated geometry and mesh directories ────────────────
+data/geometry/
+data/mesh/
+
+# ─── Runtime logs and local session files ───────────────────
+pyfluent_watchdog.err
+session_transcript.txt
+
+# ─── Claude Code local config ───────────────────────────────
+.claude/

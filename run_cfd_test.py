@@ -122,31 +122,28 @@ def main():
     print("\n  [Sys] Waiting 8 seconds for Ansys License to gracefully release...")
     time.sleep(8)
 
-    # ── Step 3: Launch solver & Load Mesh ──────────────────────────────────
-    print("\n[3/6] Launching Fluent solver & Loading Mesh...")
-    fluidist = FluidistAgent(show_gui=False)
-    
-    # Load the pure mesh natively instead of processing DXFs
-    fluidist.solver.settings.file.read_case(file_name=mesh_path)
-    
-    print("  PASS: Fluent solver launched and Mesh Loaded.")
+    # ── Steps 3–6: Launch solver, load mesh, set BCs, solve, export ────────
+    print("\n[3/6] Launching Fluent solver...")
+    fluidist = FluidistAgent(show_gui=True)
 
-    # ── Step 4: Set boundary conditions ────────────────────────────────────
-    print("\n[4/6] Setting boundary conditions (50 m/s, k-omega SST)...")
-    fluidist.set_boundary_conditions(inlet_velocity=50.0)
-    print("  PASS: Boundary conditions set.")
+    cfd_failed = False
+    try:
+        print("\n[4-6/6] Running CFD pipeline (load → BCs → solve → export)...")
+        fluidist.run_from_mesh(
+            mesh_path=mesh_path,
+            inlet_velocity=50.0,
+            iterations=300,
+            output_csv=output_csv,
+        )
+        print("  PASS: CFD pipeline complete.")
+    except RuntimeError as e:
+        print(f"  FAIL: CFD pipeline failed — {e}")
+        cfd_failed = True
+    finally:
+        fluidist.close()
 
-    # ── Step 5: Run the simulation ─────────────────────────────────────────
-    print("\n[5/6] Running simulation (300 iterations)...")
-    fluidist.run_simulation(iterations=300)
-    print("  PASS: Simulation complete.")
-
-    # ── Step 6: Export pressure CSV ────────────────────────────────────────
-    print("\n[6/6] Exporting pressure distribution...")
-    fluidist.export_pressure_csv(output_path=output_csv)
-
-    # ── Clean up ───────────────────────────────────────────────────────────
-    fluidist.close()
+    if cfd_failed:
+        return 1
     
     # Final project cleanup and pruning
     CleanupManager.bootstrap()

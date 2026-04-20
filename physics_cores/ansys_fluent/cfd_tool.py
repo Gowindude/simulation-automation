@@ -19,7 +19,7 @@ os.environ["ANSYS_NO_WINDOWS_USER_AUTH"] = "1"
 os.environ["ANSYSLI_NO_USER_CHECK"] = "1"
 
 import ansys.fluent.core as pyfluent
-from ansys.fluent.core import ScalarFieldDataRequest, SurfaceDataType, SurfaceFieldDataRequest
+from ansys.fluent.core import SurfaceDataType
 
 
 class FluidistAgent:
@@ -57,6 +57,8 @@ class FluidistAgent:
         # Quick health check — raises if gRPC connection to Fluent is broken.
         assert self.solver.health_check.is_serving, "Fluent session is not healthy!"
         print("Fluent launched successfully.")
+
+        self.show_gui = show_gui
 
     def generate_or_load_mesh(
         self,
@@ -104,8 +106,9 @@ class FluidistAgent:
                 mode=pyfluent.FluentMode.SOLVER,
                 dimension=pyfluent.Dimension.TWO,
                 precision=pyfluent.Precision.DOUBLE,
-                processor_count=4,
-                show_gui=self.show_gui,
+                processor_count=1,
+                ui_mode=pyfluent.UIMode.GUI if self.show_gui else pyfluent.UIMode.NO_GUI,
+                additional_arguments="-nwnua",
             )
 
         # Load the mesh into the active solver session.
@@ -139,12 +142,27 @@ class FluidistAgent:
         setup.materials.fluid["air"]  # ensures air is the active fluid
 
         # ---- Inlet Boundary Condition ----
-        # "velocity-inlet" named zone. The zone name "inlet" must match what is
-        # defined in the mesh — if you rename it in the mesher, update here too.
+        # Zone name "inlet" is hardcoded in both the mesh converter and here.
+        # Fluent expects velocity in m/s (SI) by default.
         inlet = setup.boundary_conditions.velocity_inlet["inlet"]
-        # Set the magnitude — value comes in as m/s (SI), Fluent expects m/s by default.
         inlet.momentum.velocity_magnitude.value = inlet_velocity
         print(f"Velocity inlet set to {inlet_velocity} m/s (SI).")
+
+        # ---- Outlet Boundary Condition ----
+        # Pressure-outlet with 0 Pa gauge pressure — standard far-field condition.
+        # The solver derives the static pressure from the upstream solution; setting
+        # gauge = 0 means we let Fluent extrapolate rather than enforcing a value.
+        outlet = setup.boundary_conditions.pressure_outlet["outlet"]
+        outlet.momentum.gauge_pressure.value = 0.0
+        print("Pressure outlet set to 0 Pa gauge.")
+
+        # ---- Symmetry Boundaries ----
+        # symmetry_top and symmetry_bottom are typed as "symmetry" in the mesh.
+        # Fluent applies the symmetry condition automatically from the zone type;
+        # no settings beyond confirming the zones exist are required here.
+        setup.boundary_conditions.symmetry["symmetry_top"]
+        setup.boundary_conditions.symmetry["symmetry_bottom"]
+        print("Symmetry zones confirmed: symmetry_top, symmetry_bottom.")
 
     def run_simulation(self, iterations: int = 300):
         """
@@ -184,24 +202,26 @@ class FluidistAgent:
 
         field_data = self.solver.fields.field_data
 
-        # Step 1 — Get the (x, y) centroids of every face on the airfoil wall.
-        # We need these so the FEA tool knows WHERE each pressure value acts.
-        centroid_request = SurfaceFieldDataRequest(
-            surfaces=["airfoil"],
-            data_types=[SurfaceDataType.FacesCentroid],
-        )
-        centroid_data = field_data.get_field_data(centroid_request)
-        # centroids is an Nx3 array (x, y, z) — for 2D, z is always 0.
-        centroids = centroid_data["airfoil"].face_centroids
+        # PyFluent 0.20+ removed the class-based request objects
+        # (SurfaceFieldDataRequest, ScalarFieldDataRequest) in favour of direct
+        # method calls on the field_data object. Both methods return a dict keyed
+        # by zone ID (int), not zone name, so we pull the single value with next().
 
-        # Step 2 — Get the static (gauge) pressure at each face centroid [Pa].
-        # "static-pressure" is the Fluent field name for gauge pressure.
-        pressure_request = ScalarFieldDataRequest(
-            field_name="static-pressure",
-            surfaces=["airfoil"],
+        # Step 1 — Face centroid (x, y, z) coordinates for every face on the
+        # airfoil wall. z is always 0 for a 2D mesh; we discard it below.
+        centroid_data = field_data.get_surface_data(
+            surface_names=["airfoil"],
+            data_type=SurfaceDataType.FacesCentroid,
         )
-        pressure_data = field_data.get_field_data(pressure_request)
-        pressures = pressure_data["airfoil"]  # 1D array of pressure values
+        centroids = next(iter(centroid_data.values()))  # shape Nx3
+
+        # Step 2 — Static (gauge) pressure at each face centroid [Pa].
+        # Fluent's internal field name for gauge static pressure is "pressure".
+        pressure_data = field_data.get_scalar_field_data(
+            field_name="pressure",
+            surface_names=["airfoil"],
+        )
+        pressures = next(iter(pressure_data.values()))  # shape N
 
         # Step 3 — Write to CSV: columns are x_m, y_m, pressure_Pa (all SI).
         with open(output_path, "w", newline="") as f:
@@ -214,6 +234,144 @@ class FluidistAgent:
 
         print(f"Surface pressure exported to '{output_path}' (SI: Pascals).")
         print(f"  → {len(pressures)} data points written.")
+
+    def _check_convergence(
+        self,
+        mesh_path: str,
+        inlet_velocity: float,
+        iterations: int,
+    ):
+        """
+        Sample the airfoil pressure field and raise if the solve diverged.
+
+        Divergence heuristics (sufficient, not necessary):
+          - Any NaN or Inf pressure value.
+          - All pressures exactly zero — indicates hybrid initialisation did not run.
+          - max|p| > 1e7 Pa — unphysical for a sub-sonic incompressible case at
+            50 m/s (dynamic pressure ~1 530 Pa); the solver blew up rather than
+            converging gradually.
+
+        Args:
+            mesh_path: Passed through to the error message for Agent 5.
+            inlet_velocity: Same — gives Troubleshooter the operating condition.
+            iterations: Same — lets Troubleshooter know how many steps were taken.
+
+        Raises:
+            RuntimeError: Structured message parseable by the Troubleshooter agent.
+        """
+        import numpy as np
+
+        field_data = self.solver.fields.field_data
+        try:
+            pressure_data = field_data.get_scalar_field_data(
+                field_name="pressure",
+                surface_names=["airfoil"],
+            )
+            pressures = np.asarray(next(iter(pressure_data.values())), dtype=float)
+        except Exception as e:
+            raise RuntimeError(
+                f"[Fluidist] Could not read pressure after solve — possible divergence. "
+                f"mesh={mesh_path!r} velocity={inlet_velocity} m/s "
+                f"iterations={iterations} error={e}"
+            ) from e
+
+        if pressures.size == 0:
+            raise RuntimeError(
+                f"[Fluidist] Pressure array is empty — zone 'airfoil' returned no faces. "
+                f"mesh={mesh_path!r} velocity={inlet_velocity} m/s"
+            )
+
+        if np.any(np.isnan(pressures)) or np.any(np.isinf(pressures)):
+            raise RuntimeError(
+                f"[Fluidist] Diverged: NaN/Inf pressure values detected. "
+                f"mesh={mesh_path!r} velocity={inlet_velocity} m/s "
+                f"iterations={iterations}"
+            )
+
+        if np.all(pressures == 0.0):
+            raise RuntimeError(
+                f"[Fluidist] Solve produced all-zero pressure — initialisation may have "
+                f"failed silently. "
+                f"mesh={mesh_path!r} velocity={inlet_velocity} m/s "
+                f"iterations={iterations}"
+            )
+
+        max_abs = float(np.max(np.abs(pressures)))
+        if max_abs > 1e7:
+            raise RuntimeError(
+                f"[Fluidist] Diverged: max|pressure| = {max_abs:.2e} Pa exceeds physical "
+                f"limit for sub-sonic incompressible flow. "
+                f"mesh={mesh_path!r} velocity={inlet_velocity} m/s "
+                f"iterations={iterations}"
+            )
+
+        print(f"Convergence check passed: max|pressure| = {max_abs:.1f} Pa.")
+
+    def run_from_mesh(
+        self,
+        mesh_path: str,
+        inlet_velocity: float = 50.0,
+        iterations: int = 300,
+        output_csv: str = "data/results/pressure_dist.csv",
+    ) -> str:
+        """
+        Full CFD pipeline: load mesh → set BCs → solve → export CSV.
+
+        This is the primary entry point for Agent 6 (Lead Orchestrator).
+        It chains every step and performs a post-solve divergence check before
+        writing the output file, so callers never receive a silently bad CSV.
+
+        Args:
+            mesh_path: Path to a valid Fluent ASCII .msh file produced by MeshAgent.
+            inlet_velocity: Freestream velocity in m/s (SI). Default 50 m/s.
+            iterations: Max solver iterations. 300 is typically enough for 2D RANS
+                        to reach residuals below 1e-5 on a clean C-mesh.
+            output_csv: Destination path for the pressure distribution CSV.
+
+        Returns:
+            Absolute path to the written pressure CSV.
+
+        Raises:
+            RuntimeError: If the mesh cannot be loaded or the solve diverges.
+                          The message contains mesh, velocity, and iteration count
+                          as structured key=value pairs for Agent 5 to parse.
+        """
+        print(f"[Fluidist] Loading mesh: {mesh_path}")
+        try:
+            # Fluent 2025 R2+ defaults to CFF/HDF5 mode (.msh.h5). Disable it so
+            # Fluent reads our hand-crafted ASCII .msh file as legacy format instead
+            # of trying to parse ASCII text as HDF5 binary (which causes SIGSEGV).
+            self.solver.tui.file.cff_files("no")
+        except Exception:
+            pass  # Older PyFluent versions may not expose this TUI path — ignore
+
+        try:
+            # solver.settings.file.read_case does not exist in PyFluent 0.20+.
+            # Correct paths are solver.file.read_case() (Settings API) or TUI.
+            self.solver.tui.file.read_case(mesh_path.replace("\\", "/"))
+        except Exception as e:
+            raise RuntimeError(
+                f"[Fluidist] Failed to load mesh. "
+                f"mesh={mesh_path!r} error={e}"
+            ) from e
+
+        self.set_boundary_conditions(inlet_velocity=inlet_velocity)
+
+        solution = self.solver.settings.solution
+        solution.initialization.hybrid_initialize()
+        print("Flow field initialised with hybrid method.")
+
+        solution.run_calculation.iterate(iter_count=iterations)
+        print(f"Solver completed up to {iterations} iterations.")
+
+        self._check_convergence(
+            mesh_path=mesh_path,
+            inlet_velocity=inlet_velocity,
+            iterations=iterations,
+        )
+
+        self.export_pressure_csv(output_path=output_csv)
+        return os.path.abspath(output_csv)
 
     def close(self):
         """Cleanly shut down the Fluent solver session to free up the license."""
@@ -232,8 +390,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     agent = FluidistAgent(show_gui=False)
-    agent.solver.settings.file.read_case(file_name=args.mesh)
-    agent.set_boundary_conditions(inlet_velocity=args.velocity)
-    agent.run_simulation(iterations=args.iterations)
-    agent.export_pressure_csv(output_path=args.output)
-    agent.close()
+    try:
+        agent.run_from_mesh(
+            mesh_path=args.mesh,
+            inlet_velocity=args.velocity,
+            iterations=args.iterations,
+            output_csv=args.output,
+        )
+    finally:
+        agent.close()

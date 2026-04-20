@@ -1,39 +1,42 @@
 # ADE Pipeline — Status
 
-Last updated: 2026-04-09
+Last updated: 2026-04-10
 
 ## Agent Pipeline
 
 | Stage | Agent | Status | Notes |
 |-------|-------|--------|-------|
 | 1 | Librarian (Geometry) | Working | `GeometryAgent` + `CADBuilderAgent` produce `naca001234_domain.step` |
-| 2 | Mesh Agent | Debugging | gmsh meshing works; two converter bugs fixed (hex indices, inline `(`); awaiting confirmed Fluent load |
-| 3 | Fluidist (CFD) | Implemented; unverified | `FluidistAgent.run_from_mesh()` complete; full BC set (inlet/outlet/symmetry); PyFluent 0.20+ field data API; post-solve divergence check; blocked on Fluent MSH load |
+| 2 | Mesh Agent | Debugging | gmsh works; 3 converter bugs fixed (hex, inline `(`, BC codes); cr/cl orientation under test |
+| 3 | Fluidist (CFD) | Implemented; unverified | `run_from_mesh()` complete; full BC set; PyFluent 0.20+ field API; divergence check; blocked on mesh load |
 | 4 | Structuralist (FEA) | Not built | `physics_cores/ansys_mech/` placeholder only |
-| 5 | Surrogate (PINN) | Not built | DeepXDE/PyTorch; depends on CFD + FEA output data |
+| 5 | Surrogate (PINN) | Not built | DeepXDE/PyTorch; depends on CFD + FEA output |
 | 6 | Troubleshooter | Not built | Log monitor + LLM error interpreter |
-| 7 | Lead (Orchestrator) | Not built | LangGraph state machine; drives the design loop |
-
-## Known Blockers
-
-- Fluent load of `naca001234_2d_fluent.msh` not yet manually verified in GUI. Regenerate the file after the inline-`(` fix before testing.
+| 7 | Lead (Orchestrator) | Not built | LangGraph state machine |
 
 ## MSH Converter Bug History
 
-Two bugs were fixed in `MeshAgent._convert_to_fluent_msh()`:
+Three bugs fixed in `MeshAgent._convert_to_fluent_msh()`:
 
-1. **Decimal integers** — all counts, indices, and face data values (n0, n1, cr, cl) must be hex. Decimal caused "unable to read coordinates of node N" parse overflow.
-2. **Data block `(` on wrong line** — Fluent's parser requires `(section_header)(\n`, not `(section_header)\n(\n`. The bare `(` on its own line caused "Build Grid: Aborted due to critical error" + SIGSEGV.
+1. **Decimal integers** — all counts, indices, face data `(n0 n1 cr cl)` must be hex. Caused "unable to read coordinates of node N" parse overflow.
+2. **Data block `(` on wrong line** — must be `(section_header)(\n` not `(section_header)\n(\n`. Caused "Build Grid: Aborted" + SIGSEGV.
+3. **Wrong BC type codes** — `0x9` is pressure-far-field (3D only, caused SIGSEGV in 2D); `0x14` is mass-flow-inlet. Correct codes: `0xa`=velocity-inlet, `0x5`=pressure-outlet.
+
+## Current Blocker
+
+Mesh loads (zones recognised, no crash) but Fluent GUI reported "11528 cells with non-positive volume" with cr=c1 orientation.
+
+Mesh has been regenerated with cr=c0 (original orientation). Load in Fluent GUI (2D DP) to verify volumes are positive. If volumes are positive, run `python run_cfd_test.py`.
 
 ## Output Files (Confirmed on Disk)
 
-- `data/geometry/naca001234_domain.step` — C-domain STEP, confirmed valid (gmsh loads it)
+- `data/geometry/naca001234_domain.step` — C-domain STEP, confirmed valid
 - `data/mesh/naca001234_2d.msh` — gmsh intermediate MSH
-- `data/mesh/naca001234_2d_fluent.msh` — Fluent ASCII MSH; regenerate after latest fix before testing
+- `data/mesh/naca001234_2d_fluent.msh` — Fluent ASCII MSH, regenerated 2026-04-10 with cr=c0
 
 ## Next Actions
 
-1. Delete stale `data/mesh/naca001234_2d_fluent.msh`, regenerate with `python agents/mesh_agent.py --step data/geometry/naca001234_domain.step --name naca001234`
-2. Open Fluent GUI in **2D Double Precision** mode, load the new MSH via File > Read > Mesh, confirm zones appear (inlet, outlet, airfoil, symmetry_top, symmetry_bottom)
-3. If MSH loads cleanly: run `python run_cfd_test.py`, confirm `data/results/pressure_dist.csv` is produced
-4. If MSH load fails: debug `MeshAgent._convert_to_fluent_msh()` — check zone type codes and face-cell adjacency orientation
+1. Load `data/mesh/naca001234_2d_fluent.msh` in Fluent GUI (2D Double Precision, File > Read > Mesh)
+2. Confirm zones appear and volumes are positive (no "non-positive volume" warning)
+3. If clean: `python run_cfd_test.py`
+4. If still non-positive: the cr/cl convention needs further investigation — consider trying pure tri mesh (no BL quads) to isolate the issue
