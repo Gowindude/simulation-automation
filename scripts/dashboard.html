@@ -124,6 +124,14 @@
   .stat-tile.accent { border-color: var(--accent); }
   .stat-tile.accent .value { color: var(--accent); }
 
+  .deeponet-panel {
+    padding: 16px 18px 18px; margin-bottom: 22px;
+  }
+  .deeponet-panel .stat-row { margin-bottom: 10px; }
+  .deeponet-note {
+    color: var(--ink-2); font-size: 12px; line-height: 1.5; margin: 8px 0 0;
+  }
+
   .layout {
     display: grid; grid-template-columns: 260px 1fr; gap: 18px; align-items: start;
   }
@@ -244,6 +252,12 @@
   </header>
 
   <div class="stat-row" id="stat-row"></div>
+
+  <section class="panel deeponet-panel" id="deeponet-panel" hidden>
+    <div class="list-header"><h2>DeepONet surrogate: speed &amp; accuracy vs. the full pipeline</h2></div>
+    <div class="stat-row" id="deeponet-stat-row"></div>
+    <p class="deeponet-note" id="deeponet-note"></p>
+  </section>
 
   <div class="layout">
     <nav class="panel airfoil-list-panel">
@@ -542,10 +556,46 @@
     });
   }
 
+  // ---------- deeponet performance ----------
+  function fmtSeconds(s) {
+    if (s === null || s === undefined) return "—";
+    if (s < 0.001) return (s * 1e6).toFixed(1) + " µs";
+    if (s < 1) return (s * 1000).toFixed(2) + " ms";
+    return s.toFixed(1) + " s";
+  }
+
+  function renderDeepONet() {
+    var dn = DATA.deeponet;
+    var pt = DATA.pipeline_timing;
+    var section = document.getElementById("deeponet-panel");
+    if (!dn) { section.hidden = true; return; }
+    section.hidden = false;
+
+    var tiles = [];
+    if (pt && pt.mean_seconds_per_airfoil) {
+      tiles.push(tile("Full pipeline / airfoil", fmtSeconds(pt.mean_seconds_per_airfoil), "", false));
+    }
+    tiles.push(tile("DeepONet inference / airfoil sweep (est.)", fmtSeconds(dn.estimated_seconds_per_airfoil), "", false));
+    if (dn.pipeline_vs_deeponet_speedup_x) {
+      tiles.push(tile("Speedup", dn.pipeline_vs_deeponet_speedup_x + "&times;", "faster", true));
+    }
+    tiles.push(tile("Held-out test C<sub>p</sub> RMSE", dn.test_rmse_cp, "", false));
+    tiles.push(tile("Test airfoils (never trained/tuned on)", dn.n_test_airfoils, "of " + (dn.n_train_airfoils + dn.n_val_airfoils + dn.n_test_airfoils), false));
+    document.getElementById("deeponet-stat-row").innerHTML = tiles.join("");
+
+    document.getElementById("deeponet-note").innerHTML =
+      "Pipeline time is real measured wall-clock per airfoil (all AoA in the sweep, WSL/gmsh/OpenFOAM/CalculiX). " +
+      "DeepONet inference is measured per-query-point (" + fmtSeconds(dn.inference_seconds_per_point) + "/point, CPU) " +
+      "and scaled to an estimated one-airfoil Cp(s) sweep &mdash; not a separately measured single call, so treat it as an estimate, not a benchmark. " +
+      "Test RMSE is computed on " + dn.n_test_airfoils + " airfoil(s) held out from both training and checkpoint selection " +
+      "(train/val/test split by whole airfoil, see deeponet/dataset.py) &mdash; best checkpoint at epoch " + dn.best_epoch + ".";
+  }
+
   function init() {
     document.getElementById("source-label").textContent =
       DATA.airfoils.length + " airfoils · real UIUC corpus · generated " + (DATA.generated_at || "");
     renderStats();
+    renderDeepONet();
     renderFilters();
     renderList();
     if (DATA.airfoils.length) selectAirfoil(DATA.airfoils[0].name);

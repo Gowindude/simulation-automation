@@ -41,6 +41,7 @@ project, so treat `max_workers>1` as opt-in, not the default.
 import glob
 import json
 import os
+import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
@@ -78,13 +79,14 @@ def discover_airfoils(dat_dir, **spec_defaults):
     return specs
 
 
-def _failure(name, category, exc):
+def _failure(name, category, exc, wall_clock_seconds=None):
     return {
         "name": name,
         "status": "failed",
         "h5_path": None,
         "failure_category": category,
         "error": f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}",
+        "wall_clock_seconds": wall_clock_seconds,
     }
 
 
@@ -124,15 +126,17 @@ def run_single_airfoil(spec, output_dir):
     spar_locations = spec.get("spar_locations", DEFAULT_SPAR_LOCATIONS)
     rib_spacing = spec.get("rib_spacing", DEFAULT_RIB_SPACING)
 
+    t0 = time.time()
+
     try:
         coords = load_airfoil(dat_path)
     except Exception as exc:
-        return _failure(name, "geometry_mesh", exc)
+        return _failure(name, "geometry_mesh", exc, time.time() - t0)
 
     try:
         stage1 = run_stage1(coords, name, airfoil_dir)
     except Exception as exc:
-        return _failure(name, "geometry_mesh", exc)
+        return _failure(name, "geometry_mesh", exc, time.time() - t0)
     if not stage1["check"]["passed"]:
         # Gate #1 is non-negotiable (spec Must-Pass Gates #1) -- a
         # failing checkMesh must never feed into Stage 2, so this is a
@@ -140,6 +144,7 @@ def run_single_airfoil(spec, output_dir):
         return _failure(
             name, "geometry_mesh",
             RuntimeError(f"checkMesh gate failed: {stage1['check']}"),
+            time.time() - t0,
         )
 
     struct_mesh = None  # built lazily, once, on the first converged AoA
@@ -199,7 +204,7 @@ def run_single_airfoil(spec, output_dir):
             output_dir=airfoil_dir,
         )
     except Exception as exc:
-        return _failure(name, "other", exc)
+        return _failure(name, "other", exc, time.time() - t0)
 
     n_converged = sum(1 for r in per_aoa_results if r["cfd"]["status"] == "converged")
     return {
@@ -211,6 +216,7 @@ def run_single_airfoil(spec, output_dir):
         "n_total": len(per_aoa_results),
         "n_converged": n_converged,
         "per_aoa_results": per_aoa_results,
+        "wall_clock_seconds": time.time() - t0,
     }
 
 

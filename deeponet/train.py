@@ -23,7 +23,7 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 from deeponet.dataset import (
-    load_airfoil_records, split_by_airfoil, Normalizer, build_flat_arrays,
+    load_airfoil_records, split_train_val_test, Normalizer, build_flat_arrays,
 )
 from deeponet.model import DeepONet
 
@@ -35,11 +35,19 @@ def _to_loader(branch, trunk, targets, batch_size, shuffle):
     return DataLoader(ds, batch_size=batch_size, shuffle=shuffle)
 
 
-def train(h5_dir, epochs=300, batch_size=256, lr=1e-3, val_fraction=0.2, seed=0, out_dir="deeponet/checkpoints"):
+def train(
+    h5_dir, epochs=300, batch_size=256, lr=1e-3,
+    val_fraction=0.15, test_fraction=0.15, seed=0, out_dir="deeponet/checkpoints",
+):
     os.makedirs(out_dir, exist_ok=True)
     records = load_airfoil_records(h5_dir)
-    train_records, val_records = split_by_airfoil(records, val_fraction=val_fraction, seed=seed)
-    print(f"{len(records)} airfoils total -- {len(train_records)} train / {len(val_records)} held out")
+    train_records, val_records, test_records = split_train_val_test(
+        records, val_fraction=val_fraction, test_fraction=test_fraction, seed=seed,
+    )
+    print(
+        f"{len(records)} airfoils total -- {len(train_records)} train / "
+        f"{len(val_records)} val (checkpoint selection) / {len(test_records)} test (held out, reported once)"
+    )
 
     normalizer = Normalizer().fit(train_records)
     branch_tr, trunk_tr, y_tr, _ = build_flat_arrays(train_records, normalizer)
@@ -101,6 +109,42 @@ def train(h5_dir, epochs=300, batch_size=256, lr=1e-3, val_fraction=0.2, seed=0,
     print(f"done in {elapsed:.1f}s -- best val_loss={best_val_loss:.5f} at epoch {best_epoch} "
           f"(final epoch {epochs} val_loss={history[-1]['val_loss']:.5f})")
 
+    # Held-out test evaluation -- the BEST-val checkpoint, evaluated once
+    # against airfoils that influenced neither training nor checkpoint
+    # selection. This is the only number that should be reported as
+    # "how well does this generalize"; val_loss/val_rmse_cp above answer
+    # a different question (which checkpoint to keep).
+    model.load_state_dict(best_state)
+    model.eval()
+    branch_te, trunk_te, y_te, group_te = build_flat_arrays(test_records, normalizer)
+    branch_te_t = torch.from_numpy(branch_te)
+    trunk_te_t = torch.from_numpy(trunk_te)
+    y_te_t = torch.from_numpy(y_te)
+
+    # Inference timing on the same held-out points, for the "DeepONet
+    # prediction speed vs. full pipeline" dashboard comparison --
+    # measured here (not in a separate script) so it uses the real
+    # trained model and real query volume, not a synthetic stand-in.
+    with torch.no_grad():
+        # One warmup pass -- excluded from the timing, matches the usual
+        # convention of not counting first-call lazy-init overhead.
+        model(branch_te_t, trunk_te_t)
+        infer_t0 = time.time()
+        test_pred = model(branch_te_t, trunk_te_t)
+        infer_elapsed = time.time() - infer_t0
+        test_loss = loss_fn(test_pred, y_te_t).item()
+        test_rmse_cp = float(np.sqrt(
+            np.mean((normalizer.inverse_transform_cp(test_pred.numpy())
+                     - normalizer.inverse_transform_cp(y_te_t.numpy())) ** 2)
+        ))
+    n_test_points = len(y_te)
+    print(
+        f"held-out test ({len(test_records)} airfoils, {n_test_points} points): "
+        f"test_loss={test_loss:.5f}  test_rmse_Cp={test_rmse_cp:.4f}  "
+        f"inference={infer_elapsed*1000:.2f}ms total "
+        f"({infer_elapsed/n_test_points*1e6:.2f}us/point)"
+    )
+
     # Save the BEST-val checkpoint, not the last epoch's -- the two can
     # differ a lot once overfitting sets in (confirmed for real,
     # STATUS.md 2026-09-15: a run on 41 airfoils bottomed out at epoch
@@ -116,14 +160,19 @@ def train(h5_dir, epochs=300, batch_size=256, lr=1e-3, val_fraction=0.2, seed=0,
             "aoa_scale": normalizer.aoa_scale, "cp_mean": normalizer.cp_mean, "cp_std": normalizer.cp_std,
             "train_airfoils": [r["name"] for r in train_records],
             "val_airfoils": [r["name"] for r in val_records],
+            "test_airfoils": [r["name"] for r in test_records],
             "branch_in_dim": int(branch_tr.shape[1]),
             "best_epoch": best_epoch,
             "best_val_loss": best_val_loss,
             "final_epoch": epochs,
+            "test_loss": test_loss,
+            "test_rmse_cp": test_rmse_cp,
+            "test_n_points": n_test_points,
+            "test_inference_seconds_total": infer_elapsed,
+            "test_inference_seconds_per_point": infer_elapsed / n_test_points,
         }, f, indent=2)
 
-    model.load_state_dict(best_state)
-    return model, normalizer, history, train_records, val_records
+    return model, normalizer, history, train_records, val_records, test_records
 
 
 if __name__ == "__main__":
@@ -132,5 +181,10 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--val-fraction", type=float, default=0.15)
+    parser.add_argument("--test-fraction", type=float, default=0.15)
     args = parser.parse_args()
-    train(args.h5_dir, epochs=args.epochs, batch_size=args.batch_size, lr=args.lr)
+    train(
+        args.h5_dir, epochs=args.epochs, batch_size=args.batch_size, lr=args.lr,
+        val_fraction=args.val_fraction, test_fraction=args.test_fraction,
+    )

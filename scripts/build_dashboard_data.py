@@ -80,6 +80,20 @@ def extract(h5_dir: str) -> dict:
     n_total_aoa = sum(len(a["aoas"]) for a in airfoils)
     n_converged_aoa = sum(1 for a in airfoils for x in a["aoas"] if x["status"] == "converged")
 
+    # Pipeline timing, from the manifest's own per-airfoil wall_clock_seconds
+    # (orchestrator.py) -- only present for airfoils run after that field was
+    # added, so this quietly reports "0 timed" on an older manifest rather
+    # than fabricating a number.
+    timed = [
+        v["wall_clock_seconds"] for v in manifest.values()
+        if v.get("status") == "success" and v.get("wall_clock_seconds") is not None
+    ]
+    pipeline_timing = {
+        "n_airfoils_timed": len(timed),
+        "mean_seconds_per_airfoil": _round(np.mean(timed), 1) if timed else None,
+        "total_seconds": _round(np.sum(timed), 1) if timed else None,
+    }
+
     return {
         "generated_from": h5_dir,
         "n_airfoils": len(airfoils),
@@ -87,6 +101,52 @@ def extract(h5_dir: str) -> dict:
         "n_total_aoa": n_total_aoa,
         "n_converged_aoa": n_converged_aoa,
         "airfoils": airfoils,
+        "pipeline_timing": pipeline_timing,
+    }
+
+
+def extract_deeponet_metrics(checkpoint_dir: str, pipeline_timing: dict) -> dict | None:
+    """
+    Pull the held-out-test metrics + inference timing written by
+    deeponet/train.py's normalizer.json (see that module: test set is
+    never used for training or checkpoint selection, so test_rmse_cp is
+    a real generalization number, not a training-time proxy). Returns
+    None if no trained checkpoint exists yet -- the dashboard's own
+    build must not depend on training having been run.
+    """
+    normalizer_path = os.path.join(checkpoint_dir, "normalizer.json")
+    if not os.path.exists(normalizer_path):
+        return None
+    with open(normalizer_path) as f:
+        n = json.load(f)
+    if "test_rmse_cp" not in n:
+        # Older checkpoint, trained before the train/val/test split existed.
+        return None
+
+    n_test_airfoils = len(n.get("test_airfoils", [])) or 1
+    points_per_airfoil = n["test_n_points"] / n_test_airfoils
+    seconds_per_airfoil_inference = points_per_airfoil * n["test_inference_seconds_per_point"]
+
+    speedup_x = None
+    if pipeline_timing.get("mean_seconds_per_airfoil") and seconds_per_airfoil_inference > 0:
+        speedup_x = _round(pipeline_timing["mean_seconds_per_airfoil"] / seconds_per_airfoil_inference, 0)
+
+    return {
+        "n_train_airfoils": len(n.get("train_airfoils", [])),
+        "n_val_airfoils": len(n.get("val_airfoils", [])),
+        "n_test_airfoils": n_test_airfoils,
+        "best_epoch": n.get("best_epoch"),
+        "best_val_loss": _round(n["best_val_loss"], 5) if n.get("best_val_loss") is not None else None,
+        "test_rmse_cp": _round(n["test_rmse_cp"], 4),
+        "test_n_points": n["test_n_points"],
+        "inference_seconds_per_point": n["test_inference_seconds_per_point"],
+        # Estimated full-airfoil-sweep inference time: per-point inference
+        # time x average query points per test airfoil (one AoA's Cp(s)
+        # curve worth of points) -- an estimate, not a measured single-call
+        # timing, so it's labeled as such rather than presented as identical
+        # in kind to the measured pipeline wall-clock number.
+        "estimated_seconds_per_airfoil": seconds_per_airfoil_inference,
+        "pipeline_vs_deeponet_speedup_x": speedup_x,
     }
 
 
@@ -94,9 +154,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("h5_dir")
     parser.add_argument("--out", default="scripts/dashboard_data.json")
+    parser.add_argument("--deeponet-checkpoint-dir", default="deeponet/checkpoints")
     args = parser.parse_args()
 
     data = extract(args.h5_dir)
+    data["deeponet"] = extract_deeponet_metrics(args.deeponet_checkpoint_dir, data["pipeline_timing"])
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as f:
         json.dump(data, f, separators=(",", ":"))

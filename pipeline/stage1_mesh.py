@@ -30,6 +30,8 @@ import numpy as np
 from scipy.interpolate import CubicSpline
 
 from pipeline.troubleshooter import diagnose_mesh_failure, log_troubleshooter_call
+from pipeline._shell import run_shell as _run_wsl_raw
+from pipeline._shell import to_linux_path as _to_wsl_path
 
 
 # ------------------------------------------------------------------
@@ -75,24 +77,10 @@ def _resample_cosine(coords: np.ndarray, n_per_surface: int = 150) -> np.ndarray
 # Windows <-> WSL plumbing
 # ------------------------------------------------------------------
 
-def _to_wsl_path(win_path: str) -> str:
-    """Translate an absolute Windows path to its /mnt/<drive>/... WSL form."""
-    win_path = os.path.abspath(win_path)
-    drive, rest = os.path.splitdrive(win_path)
-    drive_letter = drive.rstrip(":").lower()
-    rest = rest.replace("\\", "/")
-    return f"/mnt/{drive_letter}{rest}"
-
-
 def _run_wsl(bash_cmd: str, timeout: int = 300) -> subprocess.CompletedProcess:
-    """Run a command inside WSL with the OpenFOAM environment sourced."""
-    full_cmd = f"source /opt/openfoam12/etc/bashrc && {bash_cmd}"
-    return subprocess.run(
-        ["wsl.exe", "--", "bash", "-lc", full_cmd],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
+    """Run a command against OpenFOAM (WSL on Windows, native on Linux --
+    see pipeline/_shell.py) with the OpenFOAM environment sourced."""
+    return _run_wsl_raw(bash_cmd, timeout=timeout, source_openfoam=True)
 
 
 # ------------------------------------------------------------------

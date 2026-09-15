@@ -20,6 +20,12 @@
 # There are ~1600+ of these; download them on demand, don't commit.
 data/raw/airfoils/
 
+# ─── G2Aero database (downloaded/converted by g2aero_downloader.py) ─────
+# curated_airfoils.npz is ~310MB; *.dat under airfoils_g2aero/ is already
+# covered by the *.dat rule above, listed here for clarity.
+data/raw/g2aero/
+data/airfoils_g2aero/
+
 # ─── Python bytecode ────────────────────────────────────────
 __pycache__/
 *.pyc

@@ -39,6 +39,9 @@ import subprocess
 
 import numpy as np
 
+from pipeline._shell import run_shell as _run_wsl_raw
+from pipeline._shell import to_linux_path as _to_wsl_path
+
 TRACKED_FIELDS = ("Ux", "Uy", "p", "nuTilda")
 CONVERGENCE_THRESHOLD = 1e-5
 
@@ -178,20 +181,8 @@ relaxationFactors
 """
 
 
-def _to_wsl_path(win_path: str) -> str:
-    win_path = os.path.abspath(win_path)
-    drive, rest = os.path.splitdrive(win_path)
-    drive_letter = drive.rstrip(":").lower()
-    rest = rest.replace("\\", "/")
-    return f"/mnt/{drive_letter}{rest}"
-
-
 def _run_wsl(bash_cmd: str, timeout: int) -> subprocess.CompletedProcess:
-    full_cmd = f"source /opt/openfoam12/etc/bashrc && {bash_cmd}"
-    return subprocess.run(
-        ["wsl.exe", "--", "bash", "-lc", full_cmd],
-        capture_output=True, text=True, timeout=timeout,
-    )
+    return _run_wsl_raw(bash_cmd, timeout=timeout, source_openfoam=True)
 
 
 def _ensure_numerics(case_dir: str) -> None:

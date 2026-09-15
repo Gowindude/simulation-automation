@@ -101,6 +101,38 @@ def split_by_airfoil(records: list[dict], val_fraction: float = 0.2, seed: int =
     return train, val
 
 
+def split_train_val_test(
+    records: list[dict], val_fraction: float = 0.15, test_fraction: float = 0.15, seed: int = 0,
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Three-way holdout split by whole airfoil.
+
+    Val drives checkpoint selection during training (same role as
+    split_by_airfoil's val set). Test is never touched during training
+    or checkpoint selection -- it exists only to report a real
+    generalization number once, at the end. Reusing val for both jobs
+    (the previous single-split setup) lets the "best" checkpoint be
+    implicitly chosen to look good on the same set used to report
+    "how good is the model," which is optimistic, not a held-out result.
+    """
+    rng = np.random.default_rng(seed)
+    order = rng.permutation(len(records))
+    n = len(records)
+    n_val = max(1, int(round(n * val_fraction)))
+    n_test = max(1, int(round(n * test_fraction)))
+    if n_val + n_test >= n:
+        raise ValueError(
+            f"val_fraction + test_fraction leaves no training airfoils "
+            f"({n_val} val + {n_test} test >= {n} total records)"
+        )
+    val_idx = order[:n_val]
+    test_idx = order[n_val:n_val + n_test]
+    train_idx = order[n_val + n_test:]
+    train = [records[i] for i in train_idx]
+    val = [records[i] for i in val_idx]
+    test = [records[i] for i in test_idx]
+    return train, val, test
+
+
 class Normalizer:
     """Fit on train records only, applied to both splits -- fitting on
     val data would leak information about the held-out airfoils into

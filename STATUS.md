@@ -1,6 +1,112 @@
 # ADE Pipeline — Status
 
-Last updated: 2026-09-15 (troubleshooter agent, DeepONet training x3, dashboard, 41-airfoil corpus)
+Last updated: 2026-09-15 (train/val/test split, dashboard DeepONet metrics, G2Aero corpus, native-Linux shell dispatch for GH Actions)
+
+### DeepONet: real train/val/test split exposes a generalization gap (2026-09-15)
+
+The previous train/val split (`deeponet/dataset.py::split_by_airfoil`) used
+the same held-out airfoils both to pick the best checkpoint AND as the
+number reported for "how good is this" -- optimistic, not a true
+held-out result. Added `split_train_val_test` (3-way, by whole airfoil)
+and wired `deeponet/train.py` to report a test-set metric computed once,
+after training, on airfoils that influenced neither training nor
+checkpoint selection.
+
+Re-ran training on the same 41-airfoil dataset (29 train / 6 val / 6
+test, `--epochs 800`): best val_loss=0.406 (epoch 53) vs. **held-out
+test_loss=1.894, test_rmse_Cp=1.15** -- the real generalization number is
+~4.6x worse than what the val-only setup was reporting. Confirms the
+41-airfoil corpus is still too small/narrow for the model to generalize
+well, not just an academic distinction -- worth keeping in mind before
+trusting any dashboard "accuracy" number as production-quality.
+
+Also measured real DeepONet inference speed on this same test set:
+0.25us/point (CPU), i.e. a full one-airfoil Cp(s) sweep estimated at
+~0.3ms -- vs. a real measured single-airfoil full-pipeline wall-clock
+of **131.8s** (naca0012, 5/5 AoA, WSL/gmsh/OpenFOAM/CalculiX, measured
+fresh this session, not the older ~116s/airfoil batch-average number).
+Both numbers now surface on the dashboard (`scripts/dashboard.html`'s
+new "DeepONet surrogate: speed & accuracy" panel, fed by
+`scripts/build_dashboard_data.py`'s new `pipeline_timing`/`deeponet`
+sections) -- degrades gracefully (panel hidden) if a manifest predates
+per-airfoil timing or a checkpoint predates the 3-way split.
+
+### G2Aero corpus added: 358 new real airfoils (2026-09-15)
+
+Per user request, pulled NREL's G2Aero `curated_airfoils.npz`
+(data.openei.org/submissions/6198, CC BY 4.0) as a second real-airfoil
+source alongside UIUC. **Correction to the dataset's own published
+docs**: NREL's page describes `classes` as distinguishing real vs.
+6,164 synthetic shapes; the actual downloaded file's `classes` array
+holds each shape's NAME string, not a 0/1 label -- 14 names repeat
+~1,000x each (the CST-perturbation baselines, 13,012 shapes), the
+remaining 6,152 appear exactly once (the real BigFoil-derived
+airfoils). `data/g2aero_downloader.py::load_real_shapes` identifies
+"real" by that repeat-count heuristic, not a hardcoded expected number
+(which would silently drift if a future file version changes it).
+
+Real, non-name-based dedup also added (`is_near_duplicate`, resampled
+max-pointwise-distance, 1% chord threshold) since G2Aero's real subset
+substantially overlaps UIUC (BigFoil itself incorporates UIUC). Real
+run against the full 1,666-file UIUC corpus (`data/raw/airfoils/`):
+6,152 real G2Aero shapes -> 1,028 name-duplicates + 4,674
+geometry-duplicates + 92 rejected by Stage 0's own self-intersection
+check (mostly exotic theoretical shapes -- Joukowsky sections, extreme
+aspect-ratio GA airfoils) -> **358 net new airfoils** written to
+`data/airfoils_g2aero/`, all verified parsing cleanly through Stage 0
+(the same bar the original 100-airfoil UIUC pull was held to). Not yet
+run through the CFD/FEA pipeline itself -- that's the GitHub Actions
+work below.
+
+### Native-Linux shell dispatch: unblocks running the pipeline on GitHub Actions (2026-09-15)
+
+`wsl.exe` was hardcoded via 4 separately-duplicated `_run_wsl`/
+`_to_wsl_path` helper pairs (stage1_mesh.py, stage3_run.py,
+stage4_postprocess.py, stage8_calculix_run.py) -- fine for a
+Windows+WSL-only project, but a GitHub Actions Linux runner has no WSL
+layer at all, so `wsl.exe` would just fail there, not silently work.
+Consolidated into `pipeline/_shell.py::run_shell`/`to_linux_path`,
+platform-dispatched via `platform.system()`: `wsl.exe -- bash -lc` on
+Windows (byte-for-byte the same invocation the old duplicated helpers
+made -- confirmed via the full real-hardware Stage 1/3/4/8 test suite,
+76 tests + 1 xfail, all still passing after the refactor), plain
+`bash -lc` on Linux (no wsl.exe wrapper, since none exists there).
+
+Added `.github/workflows/airfoil_smoke_test.yml` (`workflow_dispatch`
+only, not on every push): installs OpenFOAM 12 + CalculiX + xfoil +
+gmsh natively via apt/pip, runs one real airfoil (naca0012) through the
+full Stage 0-9 chain, asserts a real `.h5` with >=1 converged AoA. This
+is the locked target before any matrix fan-out over more airfoils, per
+the build spec's own "propose the verification target, then build to
+it" convention. **Not yet run for real** -- apt package names
+(`openfoam12`, `calculix-ccx`, `xfoil`) and the OpenFOAM Foundation apt
+repo URL are correct per their own published install docs but unverified
+against an actual GitHub Actions runner; expect at least one real
+iteration to shake out install issues before this passes cleanly. Not
+yet pushed to the remote -- pending confirmation, since it's the first
+thing in this project that touches GitHub Actions minutes / CI.
+
+Researched (not yet acted on): further free compute beyond local
+`max_workers` -- GitHub Actions' free-tier matrix jobs (up to 20
+concurrent runners, unlimited minutes on a public repo) are the
+strongest option once the smoke test above is proven; Oracle Cloud's
+Always Free ARM tier is a fallback for any single airfoil needing more
+than a 6-hour job cap, but has known provisioning/ARM-build friction.
+
+### Known flaky/load-sensitive real-hardware test (observed, not fixed, 2026-09-15)
+
+`test_orchestrator_real_multi_airfoil.py::test_real_parallel_batch_converges_with_no_corruption_and_beats_serial`
+failed on its wall-clock threshold (621s actual vs. <348s required) while
+this session had heavy concurrent load (a 310MB download, DeepONet
+training, and back-to-back pytest runs all sharing the same WSL VM/16
+cores). All of that run's actual correctness assertions passed (4/4
+airfoils, 5/5 AoA converged each, no corruption) -- only the timing
+assertion failed, and 621s is even slower than the test's own naive
+*serial* estimate (464s), which points at contention, not a real
+regression (STATUS.md's own prior measurement of this exact test was
+237.9s under quieter conditions). Not re-verified under quiet
+conditions this session due to the ~10min-per-run cost -- worth a clean
+rerun before trusting it either way.
 
 ## Current architecture: deterministic pipeline (`.claude/airfoil_pipeline_build_spec.md`)
 
