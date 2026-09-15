@@ -64,21 +64,14 @@ jobs:
           pip install numpy scipy gmsh h5py pyvista requests beautifulsoup4 lxml pytest
 
       - name: Run single-airfoil pipeline smoke test (naca0012, real solve)
-        run: |
-          python - <<'PYEOF'
-          import json
-          from pipeline.orchestrator import run_single_airfoil
-
-          spec = {"name": "naca0012", "dat_path": "tests/fixtures/naca0012.dat"}
-          result = run_single_airfoil(spec, ".orchestrator_runs/ci_smoke")
-
-          summary = {k: v for k, v in result.items() if k != "per_aoa_results"}
-          print(json.dumps(summary, indent=2, default=str))
-
-          assert result["status"] == "success", f"pipeline failed: {result.get('error')}"
-          assert result["n_converged"] >= 1, "no AoA converged -- 0/5 is not a passing smoke test"
-          assert result["h5_path"], "no .h5 written"
-          PYEOF
+        # Runs a real .py FILE, not a `python - <<HEREDOC` stdin script --
+        # the first real run of this workflow hung for 28 minutes because
+        # a stdin-piped script breaks multiprocessing's spawn-context
+        # re-import (__main__.__file__ == '<stdin>'), which crashed the
+        # isolated gmsh subprocess before it could ever report back. See
+        # scripts/ci_smoke_test.py's own docstring and
+        # pipeline/_gmsh_isolation.py's timeout fix (same incident).
+        run: python scripts/ci_smoke_test.py
 
       - uses: actions/upload-artifact@v4
         if: always()

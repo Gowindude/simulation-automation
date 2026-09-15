@@ -93,6 +93,51 @@ strongest option once the smoke test above is proven; Oracle Cloud's
 Always Free ARM tier is a fallback for any single airfoil needing more
 than a 6-hour job cap, but has known provisioning/ARM-build friction.
 
+### First real GitHub Actions run: apt/pip install verified, real bug found and fixed (2026-09-15)
+
+Ran the smoke-test workflow for real (`gh workflow run`, `feature/mesh-agent`,
+after pushing just the workflow file to `main` too -- GitHub only allows
+`workflow_dispatch` to be dispatched once the workflow file exists on the
+default branch, even to run against a different ref). **Every install
+step succeeded**: `openfoam12`, `calculix-ccx`, `xfoil` all installed
+cleanly from the exact apt source/package names cross-checked against
+this project's own working WSL install -- that verification approach
+held up for real, not just in theory.
+
+The run itself **looked like a 28-minute hang** (job-level
+`timeout-minutes: 30` eventually force-killed it) but the real failure
+happened in the first 10 seconds: the workflow ran its Python snippet
+via `python - <<HEREDOC` (stdin), which sets `__main__.__file__` to
+`<stdin>` -- not a real path. `pipeline/_gmsh_isolation.py`'s spawned
+multiprocessing child (Stage 5/6's gmsh isolation) crashed during
+interpreter bootstrap trying to re-import that non-existent path,
+*before* it ever reached `_worker_entry` to report anything back. The
+parent's `queue.get()` had no timeout, so it waited forever -- a real
+10-second crash was indistinguishable from a genuine still-running solve
+until GitHub's own job timeout intervened.
+
+**Two fixes, not one** (STATUS's own past pattern -- a hardcoded-path
+gotcha needs both the direct fix and a defensive bound, or the same
+failure mode just recurs somewhere else):
+1. `scripts/ci_smoke_test.py` -- a real file with `if __name__ ==
+   "__main__":`, called via `python scripts/ci_smoke_test.py`, not
+   piped through stdin. Root-cause fix for *this* incident.
+2. `pipeline/_gmsh_isolation.py::run_isolated` now takes a bounded
+   `timeout` (default 600s, generous vs. real ~132s single-airfoil
+   solves) and polls rather than blocking indefinitely -- a child that
+   dies without ever reporting now raises a RuntimeError within one
+   poll interval (~0.2s), and a child that's still running past budget
+   raises TimeoutError, distinct failure modes rather than one
+   indistinguishable hang. Covered by `tests/test_gmsh_isolation.py` (5
+   tests, including a real subprocess death simulated via `os._exit`).
+   This means any *future* bootstrap-crash-shaped bug (not just this
+   exact stdin gotcha) fails fast instead of silently eating a job's
+   entire timeout budget.
+
+Not yet re-run for real after these fixes -- next step is triggering
+the workflow again to confirm the actual solve now completes (or fails
+with a real, fast, legible error if something else is still wrong).
+
 ### Known flaky/load-sensitive real-hardware test (observed, not fixed, 2026-09-15)
 
 `test_orchestrator_real_multi_airfoil.py::test_real_parallel_batch_converges_with_no_corruption_and_beats_serial`
