@@ -1,6 +1,6 @@
 # ADE Pipeline — Status
 
-Last updated: 2026-09-15 (troubleshooter agent, DeepONet training, dashboard)
+Last updated: 2026-09-15 (troubleshooter agent, DeepONet training x3, dashboard, 41-airfoil corpus)
 
 ## Current architecture: deterministic pipeline (`.claude/airfoil_pipeline_build_spec.md`)
 
@@ -400,30 +400,90 @@ DeepONet wants, already stored per point.
   only ~34 airfoils). Checkpoint + normalizer + train/val airfoil split
   saved to `deeponet/checkpoints/`.
 
-**Full real training run completed** (`python -m deeponet.train --h5-dir
-.orchestrator_runs/real_uiuc_35 --epochs 800`, CPU-only, ~5 min): 27
-train airfoils / 7 held out (ah79100c, dae11, fx63137, mh60, naca643618,
-rae2822, vr7). Train loss 0.985 -> 0.062 over 800 epochs; **held-out
-val loss 1.028 -> 0.376** (best 0.322 at epoch 790), held-out RMSE(Cp)
-~0.47-0.51 in physical units. The held-out loss decreasing alongside
-train loss, not diverging from it, is the real signal here -- it means
-the model is generalizing to airfoil shapes it never saw during
-training, not just memorizing the 27 training shapes. Not a converged/
-tuned model (small architecture, first run, ~34 airfoils total is thin
-for a DeepONet by ML-dataset standards) -- a working, real,
-generalizing first pass, per the explicit goal ("training underway,"
-not "training finished"). Checkpoint: `deeponet/checkpoints/
-deeponet_cp.pt` + `history.json` (full per-epoch record, source of
-truth over this summary) + `normalizer.json` (train/val split,
-normalization stats -- needed to reload/reuse the model correctly).
+**Two full real training runs**, both `python -m deeponet.train --h5-dir
+.orchestrator_runs/real_uiuc_35 --epochs 800` (CPU-only, ~5 min each):
 
-**Immediate next steps for training** (not done tonight, time-boxed
-out): (1) more airfoils -- 34 is small for a DeepONet, the synthetic-
-geometry plan above exists partly for this; (2) a proper val-loss-vs-
-epoch plot to check for overfitting past epoch ~790 (best val epoch
-wasn't the last one, a mild signal worth a real look); (3) hyperparameter
-sweep (branch/trunk width, `p` embedding dim) once there's enough data
-that overfitting to 27 airfoils isn't the dominant concern.
+- **Run 1, 34 airfoils** (27 train / 7 held out): train loss
+  0.985 -> 0.062; held-out val loss 1.028 -> 0.376 (best 0.322 at epoch
+  790) -- val loss tracked train loss down essentially the whole run,
+  a clean generalizing result.
+- **Run 2, 41 airfoils** (after downloading 100 more real UIUC airfoils
+  from the public database and re-running the orchestrator -- see
+  below; 33 train / 8 held out: a18, a18sm, a63a108c, goe398, m6, mh60,
+  naca23012, rg15): train loss 0.955 -> 0.066 (still monotonic); but
+  **held-out val loss bottoms out at epoch ~102 (0.577) then rises and
+  oscillates for the remaining ~700 epochs (0.69-1.09 range, ends at
+  0.890)** -- confirmed by sampling val_loss every 50 epochs across the
+  full run, not a one-point artifact. This is real overfitting past
+  ~epoch 100-150, not the "mild signal" the run-1 note speculated about
+  -- run 2's larger, more diverse (less curated) corpus made it visible
+  where run 1's smaller run either hadn't reached that regime yet or
+  got lucky with its particular train/val split.
+
+**Fixed same night:** `train.py` was only saving the *final*-epoch
+checkpoint, not the best-val one -- `deeponet_cp.pt` was silently the
+epoch-800 (overfit) weights from run 2, not the better-generalizing
+epoch-102 ones, with nothing in the filename or checkpoint itself to
+warn a future reader. Fixed: `train.py` now tracks `best_val_loss`
+across the run, saves that state dict as `deeponet_cp.pt` (the final-
+epoch weights are kept too, explicitly renamed
+`deeponet_cp_final_epoch.pt`, for a caller who genuinely wants them),
+and records `best_epoch`/`best_val_loss`/`final_epoch` in
+`normalizer.json` so the gap between them is visible without having to
+cross-reference `history.json` by hand. Re-ran training with the fix
+(**run 3**, same 41-airfoil dataset, same 33/8 split): confirms the
+overfitting pattern is real and consistent across runs, not a one-off
+-- best val_loss this time was even earlier, **epoch 29** (val_loss
+0.732), vs. run 2's epoch 102. `deeponet_cp.pt` now correctly holds
+that epoch-29 checkpoint, not epoch 800's.
+
+**Immediate next steps for training:** (1) more airfoils and/or
+regularization (dropout, weight decay, or simply a smaller model) --
+41 airfoils is still thin for a DeepONet by ML-dataset standards, and
+overfitting emerging this early (epoch ~30-100 of 800, consistent
+across two independent runs) says the model has more capacity than the
+data supports right now; (2) proper early stopping in `train.py`
+(currently always runs the full requested epoch count and relies on
+best-checkpoint tracking after the fact -- fine for a first pass, but
+wastes ~700 epochs of compute once overfitting has clearly set in);
+(3) hyperparameter sweep (branch/trunk width, `p` embedding dim) only
+after (1) and (2), so a sweep isn't just measuring which config
+overfits fastest.
+
+### Corpus scale-up: 41 airfoils (2026-09-15, continued)
+
+Per explicit user request ("continue running the pipeline to train the
+DeepONet"), downloaded 100 additional real airfoils from the public
+UIUC database (`data/airfoil_downloader.py`'s existing scraper, source
+`m-selig.ae.illinois.edu` -- the same academic source the original 35
+fixtures came from; confirmed with the user before running, since a
+bulk external download needs explicit sign-off). Verified all 100
+parse through Stage 0 before committing to a full pipeline run: 99/100
+clean, one (`30p-30n`, a NASA multi-element high-lift configuration --
+slat+main+flap as one file, not a single closed contour) correctly
+rejected by tonight's own self-intersection guard -- real validation of
+that guard against genuinely unexpected real-world data, not just the
+adversarial synthetic cases it was built against. Two more files from
+the same family (`30p-30n-flap`, `30p-30n-slat`, the isolated flap/slat
+elements alone) passed Stage 0 but were correctly excluded later
+(`geometry_mesh` failure) -- the pipeline's layered gates catching what
+each individual check didn't.
+
+Ran the orchestrator over the combined 134-airfoil `real_uiuc/`
+directory (`resume=True`, so the 34 already-done airfoils were skipped,
+not re-run) at `max_workers=4`. **The batch was killed partway through
+by the OS for low system memory** -- not a code bug: checked afterward,
+no orphaned `python`/`wsl.exe` processes remained, and the top memory
+consumers at kill time were the browser (several hundred MB each,
+multiple tabs) and the WSL VM itself, not a leak in the pipeline. 45
+airfoils had completed by then (41 success + the 3 excluded `30p-30n*`
+files + 1 other). **Given this session was also well past its allotted
+time budget at this point, chose not to retry/relaunch the remaining
+~90 airfoils** -- retrained on the 41 available instead (see above) and
+stopped there. Resuming the rest of the 100-airfoil download is a
+clean, mechanical next step (`resume=True` already means it picks up
+exactly where it left off) whenever there's a session with memory
+headroom and time for it.
 
 ### Demo dashboard (Artifact, 2026-09-15)
 

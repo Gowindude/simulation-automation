@@ -57,6 +57,10 @@ def train(h5_dir, epochs=300, batch_size=256, lr=1e-3, val_fraction=0.2, seed=0,
     y_va_t = torch.from_numpy(y_va)
 
     history = []
+    best_val_loss = float("inf")
+    best_state = None
+    best_epoch = None
+
     t0 = time.time()
     for epoch in range(1, epochs + 1):
         model.train()
@@ -84,13 +88,27 @@ def train(h5_dir, epochs=300, batch_size=256, lr=1e-3, val_fraction=0.2, seed=0,
             ))
 
         history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "val_rmse_cp": val_rmse_cp})
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_epoch = epoch
+            # Deep-copy off the GPU/graph, not a reference -- the model
+            # keeps training after this point.
+            best_state = {k: v.clone() for k, v in model.state_dict().items()}
         if epoch % max(1, epochs // 20) == 0 or epoch == 1:
             print(f"epoch {epoch:4d}  train_loss={train_loss:.5f}  val_loss={val_loss:.5f}  val_rmse_Cp={val_rmse_cp:.4f}")
 
     elapsed = time.time() - t0
-    print(f"done in {elapsed:.1f}s")
+    print(f"done in {elapsed:.1f}s -- best val_loss={best_val_loss:.5f} at epoch {best_epoch} "
+          f"(final epoch {epochs} val_loss={history[-1]['val_loss']:.5f})")
 
-    torch.save(model.state_dict(), os.path.join(out_dir, "deeponet_cp.pt"))
+    # Save the BEST-val checkpoint, not the last epoch's -- the two can
+    # differ a lot once overfitting sets in (confirmed for real,
+    # STATUS.md 2026-09-15: a run on 41 airfoils bottomed out at epoch
+    # ~102 then rose for the remaining ~700 epochs). The final-epoch
+    # state is also kept, explicitly named, so a caller can still get it
+    # if that's genuinely what they want.
+    torch.save(best_state, os.path.join(out_dir, "deeponet_cp.pt"))
+    torch.save(model.state_dict(), os.path.join(out_dir, "deeponet_cp_final_epoch.pt"))
     with open(os.path.join(out_dir, "history.json"), "w") as f:
         json.dump(history, f, indent=2)
     with open(os.path.join(out_dir, "normalizer.json"), "w") as f:
@@ -99,8 +117,12 @@ def train(h5_dir, epochs=300, batch_size=256, lr=1e-3, val_fraction=0.2, seed=0,
             "train_airfoils": [r["name"] for r in train_records],
             "val_airfoils": [r["name"] for r in val_records],
             "branch_in_dim": int(branch_tr.shape[1]),
+            "best_epoch": best_epoch,
+            "best_val_loss": best_val_loss,
+            "final_epoch": epochs,
         }, f, indent=2)
 
+    model.load_state_dict(best_state)
     return model, normalizer, history, train_records, val_records
 
 
