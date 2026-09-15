@@ -72,3 +72,6 @@ session_transcript.txt
 deeponet/checkpoints/
 scripts/dashboard_data.json
 scripts/dashboard_publish.html
+
+# ─── CI matrix run output (scripts/ci_run_airfoil.py) ───────────
+ci_results/
