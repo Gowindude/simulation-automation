@@ -15,6 +15,13 @@ recurs.
 """
 
 import json
+import os
+import sys
+
+# `python scripts/ci_smoke_test.py` puts scripts/ on sys.path, not the
+# repo root -- `pipeline` wouldn't be importable otherwise. Same fix as
+# scripts/build_dashboard_data.py already uses for this exact problem.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pipeline.orchestrator import run_single_airfoil
 
