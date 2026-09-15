@@ -1,0 +1,43 @@
+/*---------------------------------------------------------------------------*\
+  =========                 |
+  \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox
+   \\    /   O peration     | Website:  https://openfoam.org
+    \\  /    A nd           | Version:  12
+     \\/     M anipulation  |
+\*---------------------------------------------------------------------------*/
+Build  : 12-86e126a7bc4d
+Exec   : foamRun
+Date   : Aug 27 2026
+Time   : 02:14:07
+Host   : "TaranZenbook"
+PID    : 548102
+I/O    : uncollated
+Case   : /mnt/c/Users/quack/documents/projects/simulation-automation/scratch_stage3_probe/naca0012_aoa+4.0
+nProcs : 1
+sigFpe : Enabling floating point exception trapping (FOAM_SIGFPE).
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 10)
+allowSystemOperations : Allowing user-supplied system call operations
+
+Usage: foamRun [OPTIONS]
+options:
+  -case <dir>       specify alternate case directory, default is the cwd
+  -parallel         run in parallel
+  -roots <(dir1 .. dirN)>
+                    slave root directories for distributed running
+  -solver <name>    Solver name
+  -srcDoc           display source code in browser
+  -doc              display application documentation in browser
+  -help             print the usage
+
+Using: OpenFOAM-12 (see https://openfoam.org)
+Build: 12-86e126a7bc4d
+
+
+
+--> FOAM FATAL ERROR:
+solver not specified in the controlDict or on the command-line
+
+    From function foamRun
+    in file foamRun.C at line 97.
+
+FOAM exiting

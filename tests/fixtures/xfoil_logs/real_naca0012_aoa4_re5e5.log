@@ -1,0 +1,154 @@
+
+ ===================================================
+  XFOIL Version 6.99
+  Copyright (C) 2000   Mark Drela, Harold Youngren
+
+  This software comes with ABSOLUTELY NO WARRANTY,
+    subject to the GNU General Public License.
+
+  Caveat computor
+ ===================================================
+
+ File  xfoil.def  not found
+
+   QUIT    Exit program
+
+  .OPER    Direct operating point(s)
+  .MDES    Complex mapping design routine
+  .QDES    Surface speed design routine
+  .GDES    Geometry design routine
+
+   SAVE f  Write airfoil to labeled coordinate file
+   PSAV f  Write airfoil to plain coordinate file
+   ISAV f  Write airfoil to ISES coordinate file
+   MSAV f  Write airfoil to MSES coordinate file
+   REVE    Reverse written-airfoil node ordering
+   DELI i  Change written-airfoil file delimiters
+
+   LOAD f  Read buffer airfoil from coordinate file
+   NACA i  Set NACA 4,5-digit airfoil and buffer airfoil
+   INTE    Set buffer airfoil by interpolating two airfoils
+   NORM    Buffer airfoil normalization toggle
+   HALF    Halve the number of points in buffer airfoil
+   XYCM rr Change CM reference location, currently  0.25000 0.00000
+
+   BEND    Display structural properties of current airfoil
+
+   PCOP    Set current-airfoil panel nodes directly from buffer airfoil points
+   PANE    Set current-airfoil panel nodes ( 160 ) based on curvature
+  .PPAR    Show/change paneling
+
+  .PLOP    Plotting options
+
+   WDEF f  Write  current-settings file
+   RDEF f  Reread current-settings file
+   NAME s  Specify new airfoil name
+   NINC    Increment name version number
+
+   Z       Zoom    | (available in all menus)
+   U       Unzoom  | 
+
+ XFOIL   c>  
+ File OPEN error.  Nonexistent file:  /
+ *** LOAD NOT COMPLETED ***
+
+ XFOIL   c>   Max thickness =     0.120032  at x =   0.297
+ Max camber    =    -0.000000  at x =   0.015
+
+ Buffer airfoil set using 245 points
+
+ Blunt trailing edge.  Gap =  0.00252
+
+ Paneling parameters used...
+   Number of panel nodes       160
+   Panel bunching parameter    1.000
+   TE/LE panel density ratio   0.150
+   Refined-area/LE panel density ratio    0.200
+   Top    side refined area x/c limits  1.000 1.000
+   Bottom side refined area x/c limits  1.000 1.000
+
+ XFOIL   c>  
+ Blunt trailing edge.  Gap =  0.00252
+
+ Paneling parameters used...
+   Number of panel nodes       160
+   Panel bunching parameter    1.000
+   TE/LE panel density ratio   0.150
+   Refined-area/LE panel density ratio    0.200
+   Top    side refined area x/c limits  1.000 1.000
+   Bottom side refined area x/c limits  1.000 1.000
+
+ XFOIL   c>  
+.OPERi   c>  
+ M  =    0.0000
+ Re =  0.5000E+06
+
+.OPERv   c>  
+.OPERv   c>   Calculating unit vorticity distributions ...
+ Calculating wake trajectory ...
+ Calculating source influence matrix ...
+
+ Solving BL system ...
+
+ Initializing BL ...
+    side            1  ...
+ MRCHUE: Inverse mode at  39     Hk =   4.493
+ MRCHUE: Inverse mode at  40     Hk =   5.435
+ MRCHUE: Inverse mode at  41     Hk =   4.348
+ MRCHUE: Inverse mode at  42     Hk =   2.500
+ MRCHUE: Inverse mode at  87     Hk =   2.500
+    side            2  ...
+ MRCHUE: Inverse mode at  65     Hk =   4.262
+ MRCHUE: Inverse mode at  66     Hk =   4.782
+ MRCHUE: Inverse mode at  67     Hk =   5.295
+ MRCHUE: Inverse mode at  68     Hk =   5.799
+ MRCHUE: Inverse mode at  69     Hk =   6.295
+ MRCHUE: Inverse mode at  70     Hk =   6.777
+ MRCHUE: Inverse mode at  71     Hk =   7.240
+ MRCHUE: Inverse mode at  72     Hk =   7.672
+ MRCHUE: Inverse mode at  73     Hk =   8.059
+ MRCHUE: Inverse mode at  74     Hk =   7.051
+ MRCHUE: Inverse mode at  75     Hk =   6.070
+
+ Side 1  free  transition at x/c =  0.2549   41
+ Side 2  free  transition at x/c =  0.9843   74
+
+   1   rms: 0.1915E+00   max: 0.1141E+01   D at   78  2   RLX: 0.653
+       a =  4.000      CL =  0.5112
+      Cm = -0.0102     CD =  0.00796   =>   CDf =  0.00597    CDp =  0.00199
+
+ Side 1  free  transition at x/c =  0.2718   42
+ Side 2  free  transition at x/c =  0.9817   74
+
+   2   rms: 0.5975E-01   max: -.3654E+00   D at   87  1
+       a =  4.000      CL =  0.4903
+      Cm = -0.0065     CD =  0.00917   =>   CDf =  0.00593    CDp =  0.00324
+
+ Side 1  free  transition at x/c =  0.3316   46
+ Side 2  free  transition at x/c =  0.9847   74
+
+   3   rms: 0.1981E-01   max: 0.3572E+00   D at   42  1
+       a =  4.000      CL =  0.4813
+      Cm = -0.0041     CD =  0.00887   =>   CDf =  0.00559    CDp =  0.00329
+
+ Side 1  free  transition at x/c =  0.3213   45
+ Side 2  free  transition at x/c =  0.9855   74
+
+   4   rms: 0.5306E-02   max: -.7871E-01   D at   45  1
+       a =  4.000      CL =  0.4806
+      Cm = -0.0040     CD =  0.00897   =>   CDf =  0.00561    CDp =  0.00336
+
+ Side 1  free  transition at x/c =  0.3150   45
+ Side 2  free  transition at x/c =  0.9856   74
+
+   5   rms: 0.9114E-03   max: -.1568E-01   C at   45  1
+       a =  4.000      CL =  0.4804
+      Cm = -0.0040     CD =  0.00899   =>   CDf =  0.00562    CDp =  0.00337
+
+ Side 1  free  transition at x/c =  0.3152   45
+ Side 2  free  transition at x/c =  0.9856   74
+
+   6   rms: 0.9507E-05   max: 0.1732E-03   C at   45  1
+       a =  4.000      CL =  0.4804
+      Cm = -0.0040     CD =  0.00899   =>   CDf =  0.00562    CDp =  0.00337
+      9.000    3.3921   0.008990   0.000000   0.000000   0.000000    0.3152     #

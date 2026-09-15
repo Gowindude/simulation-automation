@@ -1,12 +1,20 @@
 # ─── Generated mesh and solution files ──────────────────────
-# These are large binary files produced by Ansys Fluent.
-# They should NOT be committed — regenerate with mesh_airfoil.py.
+# These are large binary files produced by Ansys Fluent, or generated
+# per-run OpenFOAM/CalculiX output (e.g. Stage 8's *_stage8.dat).
+# They should NOT be committed — regenerate by re-running the pipeline.
 *.msh
 *.msh.h5
 *.cas
 *.cas.h5
 *.dat
 *.dat.h5
+# Exception: tests/fixtures/**/*.dat are source-controlled test INPUTS
+# (synthetic + real UIUC airfoil coordinate files the whole Stage 0/1
+# test suite depends on), not generated output -- the whole point of
+# committing them is a fresh clone can run the tests without
+# regenerating/downloading anything. Found missing from git tracking
+# entirely (2026-09-15) -- caught before it caused a broken fresh clone.
+!tests/fixtures/**/*.dat
 
 # ─── Airfoil coordinate files (downloaded by airfoil_downloader.py) ─────
 # There are ~1600+ of these; download them on demand, don't commit.
@@ -44,3 +52,17 @@ session_transcript.txt
 
 # ─── Claude Code local config ───────────────────────────────
 .claude/
+
+# ─── Orchestrator/investigation run output (real, kept on disk for
+#     debugging -- large but cheap next to re-running real WSL/gmsh
+#     solves; never git-add these) ─────────────────────────────
+.orchestrator_runs/
+.investigation_out/
+.adversarial_probe/
+.bl_direction_test/
+.nonortho_test/
+
+# ─── DeepONet training artifacts (regeneratable from .h5 data) ──
+deeponet/checkpoints/
+scripts/dashboard_data.json
+scripts/dashboard_publish.html

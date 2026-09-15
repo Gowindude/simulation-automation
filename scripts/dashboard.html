@@ -1,0 +1,560 @@
+<title>Airfoil Pipeline Console</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f5f3ee;
+    --surface: #ffffff;
+    --surface-2: #ebe8e0;
+    --ink: #1c2430;
+    --ink-2: #4a5567;
+    --ink-3: #838c9a;
+    --border: #ddd8cc;
+    --accent: #b5601e;
+    --accent-ink: #ffffff;
+    --accent-soft: #f3e0cd;
+    --good: #3f8f5f;
+    --good-soft: #dcefe2;
+    --warn: #b8862a;
+    --warn-soft: #f5ead0;
+    --crit: #b6432f;
+    --crit-soft: #f6ddd6;
+    --grid: #e3ddcf;
+    --focus: #1c65c9;
+    color-scheme: light;
+  }
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --bg: #14181f;
+      --surface: #1c222c;
+      --surface-2: #232a35;
+      --ink: #eef1f6;
+      --ink-2: #aab3c2;
+      --ink-3: #727d8d;
+      --border: #303947;
+      --accent: #e08a45;
+      --accent-ink: #14181f;
+      --accent-soft: #3a2c1d;
+      --good: #5cbf88;
+      --good-soft: #1c3327;
+      --warn: #dcae52;
+      --warn-soft: #3a3020;
+      --crit: #e17862;
+      --crit-soft: #3d251f;
+      --grid: #2a3341;
+      --focus: #6ea6f2;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14181f;
+    --surface: #1c222c;
+    --surface-2: #232a35;
+    --ink: #eef1f6;
+    --ink-2: #aab3c2;
+    --ink-3: #727d8d;
+    --border: #303947;
+    --accent: #e08a45;
+    --accent-ink: #14181f;
+    --accent-soft: #3a2c1d;
+    --good: #5cbf88;
+    --good-soft: #1c3327;
+    --warn: #dcae52;
+    --warn-soft: #3a3020;
+    --crit: #e17862;
+    --crit-soft: #3d251f;
+    --grid: #2a3341;
+    --focus: #6ea6f2;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: max(16px, env(safe-area-inset-top,0px)) 20px max(20px, env(safe-area-inset-bottom,0px));
+    -webkit-font-smoothing: antialiased;
+  }
+  [hidden] { display: none !important; }
+  img { max-width: 100%; }
+  .mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace; }
+  .tabular { font-variant-numeric: tabular-nums; }
+
+  .shell { max-width: 1180px; margin: 0 auto; }
+
+  header.top {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap; padding-block: 6px 18px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 20px;
+  }
+  header.top .title-block h1 {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 22px; font-weight: 600; letter-spacing: -0.01em;
+    margin: 0 0 2px; text-wrap: balance;
+  }
+  header.top .title-block .sub {
+    color: var(--ink-3); font-size: 12.5px; margin: 0;
+  }
+  header.top .source {
+    color: var(--ink-3); font-size: 11px; text-align: right;
+    font-family: "IBM Plex Mono", monospace;
+  }
+
+  .stat-row {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px; margin-bottom: 22px;
+  }
+  .stat-tile {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .stat-tile .label {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--ink-3); margin-bottom: 6px; font-weight: 600;
+  }
+  .stat-tile .value {
+    font-family: "IBM Plex Mono", monospace; font-size: 26px; font-weight: 600;
+    line-height: 1;
+  }
+  .stat-tile .value .unit { font-size: 14px; color: var(--ink-2); font-weight: 500; margin-left: 3px; }
+  .stat-tile.accent { border-color: var(--accent); }
+  .stat-tile.accent .value { color: var(--accent); }
+
+  .layout {
+    display: grid; grid-template-columns: 260px 1fr; gap: 18px; align-items: start;
+  }
+  @media (max-width: 760px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  }
+
+  .airfoil-list-panel { padding: 10px; }
+  .list-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 8px 10px;
+  }
+  .list-header h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--ink-3); margin: 0; font-weight: 600;
+  }
+  .filter-chip-row { display: flex; gap: 4px; padding: 0 8px 8px; flex-wrap: wrap; }
+  .chip {
+    font-size: 10.5px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--ink-2); cursor: pointer; font-family: inherit;
+  }
+  .chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
+  .airfoil-list { list-style: none; margin: 0; padding: 0; max-height: 560px; overflow-y: auto; }
+  .airfoil-list li { margin: 0; }
+  .airfoil-item {
+    width: 100%; text-align: left; background: transparent; border: none; cursor: pointer;
+    padding: 8px 8px; border-radius: 8px; display: flex; align-items: center; gap: 8px;
+    font-family: inherit; color: var(--ink); font-size: 13px;
+  }
+  .airfoil-item:hover { background: var(--surface-2); }
+  .airfoil-item[aria-current="true"] { background: var(--accent-soft); }
+  .airfoil-item .name { flex: 1; font-family: "IBM Plex Mono", monospace; font-weight: 500; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .status-dot.good { background: var(--good); }
+  .status-dot.warn { background: var(--warn); }
+  .status-dot.crit { background: var(--crit); }
+  .airfoil-item .frac { font-size: 11px; color: var(--ink-3); font-family: "IBM Plex Mono", monospace; }
+
+  .detail-panel { padding: 20px 22px; }
+  .detail-head {
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;
+    flex-wrap: wrap; margin-bottom: 14px;
+  }
+  .detail-head h2 {
+    font-family: "IBM Plex Mono", monospace; font-size: 20px; margin: 0 0 4px; font-weight: 600;
+  }
+  .detail-head .meta { color: var(--ink-3); font-size: 12px; }
+  .badge {
+    font-size: 11px; padding: 3px 9px; border-radius: 999px; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .badge.good { background: var(--good-soft); color: var(--good); }
+  .badge.warn { background: var(--warn-soft); color: var(--warn); }
+  .badge.crit { background: var(--crit-soft); color: var(--crit); }
+
+  .shape-preview { flex-shrink: 0; }
+  .shape-preview svg { display: block; }
+
+  .section-title {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--ink-3); font-weight: 600; margin: 22px 0 10px;
+  }
+  .section-title:first-of-type { margin-top: 4px; }
+
+  .chart-row { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .chart-row { grid-template-columns: 1fr; } }
+
+  .chart-box { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+  .chart-box .chart-title { font-size: 12px; color: var(--ink-2); font-weight: 600; margin-bottom: 4px; }
+  .chart-box svg { display: block; width: 100%; height: auto; }
+  .axis-label { font-size: 9.5px; fill: var(--ink-3); font-family: "IBM Plex Mono", monospace; }
+  .grid-line { stroke: var(--grid); stroke-width: 1; }
+  .zero-line { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 2 3; }
+
+  .aoa-toggle-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .aoa-chip {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; padding: 4px 9px; border-radius: 7px;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--ink-2); cursor: pointer;
+  }
+  .aoa-chip[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+  .aoa-chip.crashed { text-decoration: line-through; opacity: 0.55; }
+
+  table.data-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.data-table th, table.data-table td {
+    text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--border);
+    font-family: "IBM Plex Mono", monospace;
+  }
+  table.data-table th:first-child, table.data-table td:first-child { text-align: left; font-family: inherit; }
+  table.data-table th { color: var(--ink-3); font-weight: 600; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; }
+  table.data-table tbody tr:hover { background: var(--surface-2); }
+
+  .empty-note { color: var(--ink-3); font-size: 12.5px; padding: 30px 10px; text-align: center; }
+
+  footer.note {
+    margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--border);
+    color: var(--ink-3); font-size: 11.5px; line-height: 1.5;
+  }
+  a { color: var(--accent); }
+
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+</style>
+
+<div class="shell">
+  <header class="top">
+    <div class="title-block">
+      <h1>Airfoil Pipeline Console</h1>
+      <p class="sub">CFD&rarr;FEA batch results &middot; UIUC geometry corpus &middot; ADE pipeline (Stages 0&ndash;9)</p>
+    </div>
+    <div class="source" id="source-label">loading&hellip;</div>
+  </header>
+
+  <div class="stat-row" id="stat-row"></div>
+
+  <div class="layout">
+    <nav class="panel airfoil-list-panel">
+      <div class="list-header"><h2>Airfoils</h2></div>
+      <div class="filter-chip-row" id="filter-row"></div>
+      <ul class="airfoil-list" id="airfoil-list"></ul>
+    </nav>
+
+    <main class="panel detail-panel" id="detail-panel">
+      <div class="empty-note">Loading dataset&hellip;</div>
+    </main>
+  </div>
+
+  <footer class="note">
+    Generated from real WSL/gmsh/OpenFOAM/CalculiX solves &mdash; no synthetic placeholders. C<sub>p</sub> curves resampled for
+    display; source arrays run to the mesh's own point count. Non-converged/crashed AoA points are shown, not hidden, per the
+    pipeline's "failed cases recorded explicitly" contract.
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var DATA = window.__DASHBOARD_DATA__ || { airfoils: [], n_airfoils: 0, n_total_aoa: 0, n_converged_aoa: 0 };
+
+  var state = { current: null, filter: "all", aoaIdx: 0 };
+
+  function statusClass(status) {
+    if (status === "converged" || status === "success") return "good";
+    if (status === "non_converged") return "warn";
+    return "crit";
+  }
+
+  function airfoilOverallClass(a) {
+    var nConv = a.aoas.filter(function (x) { return x.status === "converged"; }).length;
+    if (nConv === a.aoas.length) return "good";
+    if (nConv > 0) return "warn";
+    return "crit";
+  }
+
+  // ---------- stat row ----------
+  function renderStats() {
+    var pct = DATA.n_total_aoa ? Math.round(100 * DATA.n_converged_aoa / DATA.n_total_aoa) : 0;
+    var el = document.getElementById("stat-row");
+    el.innerHTML = [
+      tile("Airfoils in batch", DATA.n_airfoils, "", false),
+      tile("AoA points converged", DATA.n_converged_aoa + " / " + DATA.n_total_aoa, "", false),
+      tile("Convergence rate", pct, "%", true),
+      tile("Training pairs (C<sub>p</sub>)", DATA.n_converged_aoa, "AoA sweeps", false)
+    ].join("");
+  }
+  function tile(label, value, unit, accent) {
+    return '<div class="stat-tile' + (accent ? " accent" : "") + '">' +
+      '<div class="label">' + label + '</div>' +
+      '<div class="value tabular">' + value + (unit ? '<span class="unit">' + unit + '</span>' : '') + '</div>' +
+      '</div>';
+  }
+
+  // ---------- airfoil list ----------
+  function passesFilter(a) {
+    if (state.filter === "all") return true;
+    var cls = airfoilOverallClass(a);
+    return cls === state.filter;
+  }
+
+  function renderFilters() {
+    var counts = { all: DATA.airfoils.length, good: 0, warn: 0, crit: 0 };
+    DATA.airfoils.forEach(function (a) { counts[airfoilOverallClass(a)]++; });
+    var defs = [
+      ["all", "All"], ["good", "Clean"], ["warn", "Partial"], ["crit", "Failed"]
+    ];
+    var row = document.getElementById("filter-row");
+    row.innerHTML = defs.map(function (d) {
+      var pressed = state.filter === d[0];
+      return '<button class="chip" data-filter="' + d[0] + '" aria-pressed="' + pressed + '">' +
+        d[1] + ' <span class="tabular">' + counts[d[0]] + '</span></button>';
+    }).join("");
+    row.querySelectorAll(".chip").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        state.filter = btn.getAttribute("data-filter");
+        renderFilters();
+        renderList();
+      });
+    });
+  }
+
+  function renderList() {
+    var ul = document.getElementById("airfoil-list");
+    var items = DATA.airfoils.filter(passesFilter);
+    if (!items.length) {
+      ul.innerHTML = '<div class="empty-note">No airfoils match this filter.</div>';
+      return;
+    }
+    ul.innerHTML = items.map(function (a) {
+      var nConv = a.aoas.filter(function (x) { return x.status === "converged"; }).length;
+      var cls = airfoilOverallClass(a);
+      var current = state.current === a.name;
+      return '<li><button class="airfoil-item" data-name="' + a.name + '" aria-current="' + current + '">' +
+        '<span class="status-dot ' + cls + '"></span>' +
+        '<span class="name">' + a.name + '</span>' +
+        '<span class="frac tabular">' + nConv + '/' + a.aoas.length + '</span>' +
+        '</button></li>';
+    }).join("");
+    ul.querySelectorAll(".airfoil-item").forEach(function (btn) {
+      btn.addEventListener("click", function () { selectAirfoil(btn.getAttribute("data-name")); });
+    });
+  }
+
+  // ---------- shape preview ----------
+  function shapeSvg(geometry) {
+    if (!geometry || !geometry.length) return "";
+    var w = 150, h = 70, pad = 6;
+    var xs = geometry.map(function (p) { return p[0]; });
+    var ys = geometry.map(function (p) { return p[1]; });
+    var xMin = Math.min.apply(null, xs), xMax = Math.max.apply(null, xs);
+    var yMin = Math.min.apply(null, ys), yMax = Math.max.apply(null, ys);
+    var yPad = Math.max(0.02, (yMax - yMin) * 0.3);
+    yMin -= yPad; yMax += yPad;
+    var sx = function (x) { return pad + (x - xMin) / (xMax - xMin || 1) * (w - 2 * pad); };
+    var sy = function (y) { return h - pad - (y - yMin) / (yMax - yMin || 1) * (h - 2 * pad); };
+    var d = geometry.map(function (p, i) { return (i === 0 ? "M" : "L") + sx(p[0]).toFixed(1) + "," + sy(p[1]).toFixed(1); }).join(" ") + " Z";
+    return '<svg viewBox="0 0 ' + w + ' ' + h + '" width="' + w + '" height="' + h + '">' +
+      '<path d="' + d + '" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.4"/>' +
+      '</svg>';
+  }
+
+  // ---------- line chart (SVG) ----------
+  function lineChart(opts) {
+    // opts: {w,h,series:[{points:[[x,y],...], color, label}], xLabel, yLabel, zeroLine}
+    var w = opts.w, h = opts.h;
+    var padL = 34, padR = 10, padT = 10, padB = 22;
+    var allX = [], allY = [];
+    opts.series.forEach(function (s) { s.points.forEach(function (p) { allX.push(p[0]); allY.push(p[1]); }); });
+    if (!allX.length) return '<div class="empty-note">No data</div>';
+    var xMin = Math.min.apply(null, allX), xMax = Math.max.apply(null, allX);
+    var yMin = Math.min.apply(null, allY), yMax = Math.max.apply(null, allY);
+    if (opts.yMinOverride !== undefined) yMin = Math.min(yMin, opts.yMinOverride);
+    if (opts.yMaxOverride !== undefined) yMax = Math.max(yMax, opts.yMaxOverride);
+    var yPad = (yMax - yMin) * 0.08 || 0.1;
+    yMin -= yPad; yMax += yPad;
+    if (xMax === xMin) xMax = xMin + 1;
+
+    var sx = function (x) { return padL + (x - xMin) / (xMax - xMin) * (w - padL - padR); };
+    var sy = function (y) { return h - padB - (y - yMin) / (yMax - yMin) * (h - padT - padB); };
+
+    // Enough decimal places that adjacent tick labels are never identical
+    // after rounding (e.g. a 0.0-0.2 Cd range at 1 decimal collapses two
+    // distinct ticks to "0.1").
+    function tickDecimals(range) {
+      if (range === 0) return 2;
+      var mag = Math.floor(Math.log10(range / 4));
+      return Math.max(0, Math.min(4, -mag + 1));
+    }
+    var yDecimals = tickDecimals(yMax - yMin);
+    var xDecimals = tickDecimals(xMax - xMin);
+
+    var gridLines = "";
+    var nGrid = 4;
+    for (var i = 0; i <= nGrid; i++) {
+      var gy = yMin + (yMax - yMin) * i / nGrid;
+      gridLines += '<line class="grid-line" x1="' + padL + '" x2="' + (w - padR) + '" y1="' + sy(gy).toFixed(1) + '" y2="' + sy(gy).toFixed(1) + '"/>';
+      gridLines += '<text class="axis-label" x="' + (padL - 5) + '" y="' + (sy(gy) + 3).toFixed(1) + '" text-anchor="end">' + gy.toFixed(yDecimals) + '</text>';
+    }
+    var xTicks = "";
+    var nXTicks = 4;
+    for (var j = 0; j <= nXTicks; j++) {
+      var gx = xMin + (xMax - xMin) * j / nXTicks;
+      xTicks += '<text class="axis-label" x="' + sx(gx).toFixed(1) + '" y="' + (h - padB + 13) + '" text-anchor="middle">' + gx.toFixed(xDecimals) + '</text>';
+    }
+
+    var zeroLine = "";
+    if (opts.zeroLine && yMin < 0 && yMax > 0) {
+      zeroLine = '<line class="zero-line" x1="' + padL + '" x2="' + (w - padR) + '" y1="' + sy(0).toFixed(1) + '" y2="' + sy(0).toFixed(1) + '"/>';
+    }
+
+    var paths = opts.series.map(function (s) {
+      var d = s.points.map(function (p, i) { return (i === 0 ? "M" : "L") + sx(p[0]).toFixed(2) + "," + sy(p[1]).toFixed(2); }).join(" ");
+      var dashed = s.dashed ? ' stroke-dasharray="4 3"' : "";
+      var markers = s.markers ? s.points.map(function(p){ return '<circle cx="'+sx(p[0]).toFixed(2)+'" cy="'+sy(p[1]).toFixed(2)+'" r="3" fill="'+s.color+'"/>'; }).join("") : "";
+      return '<path d="' + d + '" fill="none" stroke="' + s.color + '" stroke-width="2"' + dashed + ' stroke-linejoin="round" stroke-linecap="round"/>' + markers;
+    }).join("");
+
+    return '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="xMidYMid meet">' +
+      gridLines + zeroLine + xTicks + paths + '</svg>';
+  }
+
+  // ---------- detail panel ----------
+  function selectAirfoil(name) {
+    state.current = name;
+    state.aoaIdx = 0;
+    var a = DATA.airfoils.find(function (x) { return x.name === name; });
+    if (a) {
+      var firstConv = a.aoas.findIndex(function (x) { return x.status === "converged"; });
+      state.aoaIdx = firstConv >= 0 ? firstConv : 0;
+    }
+    renderList();
+    renderDetail();
+  }
+
+  function renderDetail() {
+    var panel = document.getElementById("detail-panel");
+    var a = DATA.airfoils.find(function (x) { return x.name === state.current; });
+    if (!a) { panel.innerHTML = '<div class="empty-note">Select an airfoil from the list.</div>'; return; }
+
+    var nConv = a.aoas.filter(function (x) { return x.status === "converged"; }).length;
+    var overallCls = airfoilOverallClass(a);
+    var overallLabel = overallCls === "good" ? "All AoA converged" : overallCls === "warn" ? "Partial convergence" : "No convergence";
+
+    var head = '<div class="detail-head">' +
+      '<div>' +
+        '<h2>' + a.name + '</h2>' +
+        '<div class="meta">AoA sweep: ' + a.aoa_sweep.join(', ') + '&deg; &middot; ' + nConv + ' / ' + a.aoas.length + ' converged</div>' +
+        '<div style="margin-top:8px;"><span class="badge ' + overallCls + '">' + overallLabel + '</span></div>' +
+      '</div>' +
+      '<div class="shape-preview">' + shapeSvg(a.geometry) + '</div>' +
+    '</div>';
+
+    // AoA toggle row
+    var aoaChips = '<div class="aoa-toggle-row">' + a.aoas.map(function (x, i) {
+      var cls = statusClass(x.status);
+      var pressed = i === state.aoaIdx;
+      var crashedClass = x.status === "crashed" ? " crashed" : "";
+      return '<button class="aoa-chip' + crashedClass + '" data-idx="' + i + '" aria-pressed="' + pressed + '">' +
+        x.aoa_deg + '&deg; <span class="status-dot ' + cls + '" style="display:inline-block;margin-left:4px;"></span></button>';
+    }).join("") + '</div>';
+
+    var current = a.aoas[state.aoaIdx];
+    var cpChartHtml;
+    if (current && current.cp_curve && current.cp_curve.length) {
+      cpChartHtml = lineChart({
+        w: 460, h: 220,
+        series: [{ points: current.cp_curve, color: "var(--accent)" }],
+        zeroLine: false
+      });
+    } else {
+      cpChartHtml = '<div class="empty-note">No C<sub>p</sub> curve &mdash; AoA did not converge.</div>';
+    }
+
+    // Cl/Cd vs AoA chart (across the whole sweep, all AoAs that have values)
+    var clPoints = a.aoas.filter(function (x) { return x.Cl !== null && x.Cl !== undefined; }).map(function (x) { return [x.aoa_deg, x.Cl]; });
+    var cdPoints = a.aoas.filter(function (x) { return x.Cd !== null && x.Cd !== undefined; }).map(function (x) { return [x.aoa_deg, x.Cd]; });
+    var clXfoilPoints = a.aoas.filter(function (x) { return x.Cl_xfoil !== null && x.Cl_xfoil !== undefined; }).map(function (x) { return [x.aoa_deg, x.Cl_xfoil]; });
+
+    var clChart = lineChart({
+      w: 340, h: 180,
+      series: [
+        { points: clPoints, color: "var(--accent)", markers: true },
+        { points: clXfoilPoints, color: "var(--ink-3)", dashed: true, markers: true }
+      ],
+      zeroLine: true
+    });
+    var cdChart = lineChart({
+      w: 340, h: 180,
+      series: [{ points: cdPoints, color: "var(--focus)", markers: true }],
+      zeroLine: false
+    });
+
+    // FEA table
+    var feaRows = a.aoas.map(function (x) {
+      return '<tr>' +
+        '<td>' + x.aoa_deg + '&deg;</td>' +
+        '<td><span class="badge ' + statusClass(x.status) + '">' + x.status.replace('_', ' ') + '</span></td>' +
+        '<td class="tabular">' + (x.Cl !== null && x.Cl !== undefined ? x.Cl.toFixed(3) : '&mdash;') + '</td>' +
+        '<td class="tabular">' + (x.Cd !== null && x.Cd !== undefined ? x.Cd.toFixed(4) : '&mdash;') + '</td>' +
+        '<td class="tabular">' + (x.max_von_mises_kpa !== undefined ? x.max_von_mises_kpa.toFixed(0) + ' kPa' : '&mdash;') + '</td>' +
+        '<td class="tabular">' + (x.reaction_force_residual !== undefined ? x.reaction_force_residual.toFixed(3) : '&mdash;') + '</td>' +
+      '</tr>';
+    }).join("");
+
+    panel.innerHTML = head +
+      '<div class="section-title">Surface pressure &mdash; C<sub>p</sub>(s) at ' + (current ? current.aoa_deg + '&deg;' : '') + '</div>' +
+      aoaChips +
+      '<div class="chart-row">' +
+        '<div class="chart-box"><div class="chart-title">C<sub>p</sub> vs arc length s</div>' + cpChartHtml + '</div>' +
+        '<div class="chart-box">' +
+          '<div class="chart-title">C<sub>l</sub> vs AoA (solid = CFD, dashed = XFOIL)</div>' + clChart +
+        '</div>' +
+      '</div>' +
+      '<div class="chart-row" style="margin-top:12px;">' +
+        '<div class="chart-box"><div class="chart-title">C<sub>d</sub> vs AoA (CFD)</div>' + cdChart + '</div>' +
+        '<div class="chart-box">' +
+          '<div class="chart-title">Per-AoA summary</div>' +
+          '<div style="overflow-x:auto;"><table class="data-table">' +
+            '<thead><tr><th>AoA</th><th>Status</th><th>Cl</th><th>Cd</th><th>Max &sigma;<sub>vM</sub></th><th>Gate #4 resid.</th></tr></thead>' +
+            '<tbody>' + feaRows + '</tbody>' +
+          '</table></div>' +
+        '</div>' +
+      '</div>';
+
+    panel.querySelectorAll(".aoa-chip").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        state.aoaIdx = parseInt(btn.getAttribute("data-idx"), 10);
+        renderDetail();
+      });
+    });
+  }
+
+  function init() {
+    document.getElementById("source-label").textContent =
+      DATA.airfoils.length + " airfoils · real UIUC corpus · generated " + (DATA.generated_at || "");
+    renderStats();
+    renderFilters();
+    renderList();
+    if (DATA.airfoils.length) selectAirfoil(DATA.airfoils[0].name);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();
+</script>
