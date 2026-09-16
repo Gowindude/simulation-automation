@@ -1,0 +1,74 @@
+# Locked target: 256 additional real UIUC airfoils not yet run through
+# the pipeline (selected from the 1666-file UIUC raw corpus, excluding
+# the 30p-30n multi-element family Stage 0 already rejects, and
+# excluding any name that collides case-insensitively with an already-
+# used fixture on this Windows filesystem). Third data-generation batch
+# of the overnight run, opportunistic -- only dispatched if time remains
+# after G2Aero batch 1 + batch 2 have each completed and been merged in.
+name: Airfoil corpus matrix run (UIUC batch 3)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  run-airfoil:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        airfoil: ["as6098", "as6099", "atr72sm", "august160", "avistar", "b29root", "b29tip", "b540ols", "b707a", "b707b", "b707c", "b707d", "b707e", "b737a", "b737b", "b737c", "b737d", "bacj", "bacnlf", "bacxxx", "bambino6", "be50", "be50sm", "boe103", "boe106", "bqm34", "bte-fk", "bw050209", "bw3", "c141a", "c141b", "c141c", "c141d", "c141e", "c141f", "c5a", "c5b", "c5c", "c5d", "c5e", "cal1215j", "cal2263m", "cal4014l", "cap21c", "cast102", "ch10sm", "chen", "clarkk", "clarkv", "clarkw", "clarkx", "clarkyh", "clarkys", "clarkysm", "clarkz", "clarym15", "clarym18", "coanda1", "coanda2", "coanda3", "cootie", "cr001sm", "cr1", "curtisc72", "dae21", "dae31", "dae41", "dae51", "dai1238", "dai1335", "dai1336", "davis", "davis_corrected", "davissm", "daytonwright6", "daytonwrightt1", "dbln526", "defcnd1", "defcnd2", "defcnd3", "df101", "df102", "dfvlrr4", "dga1138", "dga1182", "dh4009sm", "doa5", "dormoy", "drgnfly", "ds19", "ds21", "dsma523a", "dsma523b", "du-80-141", "du-80-176-v1", "du84132v", "du8608418", "du861372", "e1098", "e1200", "e1210", "e1211", "e1212", "e1212mod", "e1213", "e1214", "e1230", "e1233", "e168", "e171", "e174", "e176", "e178", "e180", "e182", "e184", "e186", "e193", "e195", "e197", "e201", "e203", "e205", "e207", "e209", "e210", "e211", "e212", "e214", "e216", "e220", "e221", "e222", "e224", "e226", "e228", "e230", "e231", "e266", "e297", "e325", "e326", "e327", "e328", "e329", "e330", "e331", "e332", "e333", "e334", "e335", "e336", "e337", "e338", "e339", "e340", "e341", "e342", "e343", "e344", "e360", "e361", "e376", "e377", "e377m", "e378", "e379", "e385", "e392", "e393", "e395", "e396", "e397", "e398", "e399", "e403", "e407", "e417", "e420", "e421", "e422", "e426", "e428", "e431", "e432", "e433", "e434", "e435", "e471", "e472", "e473", "e474", "e475", "e476", "e477", "e478", "e479", "e485", "e49", "e502", "e520", "e521", "e540", "e541", "e542", "e543", "e544", "e545", "e546", "e547", "e548", "e549", "e550", "e551", "e552", "e553", "e554", "e555", "e556", "e557", "e558", "e559", "e560", "e561", "e562", "e58", "e580", "e582", "e583", "e584", "e585", "e587", "e59", "e591", "e593", "e598", "e603", "e604", "e61", "e62", "e625", "e63", "e635", "e636", "e637", "e638", "e639", "e64", "e642", "e654", "e655", "e656", "e657", "e66", "e662", "e664"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache apt archives (OpenFOAM/CalculiX/xfoil .deb downloads)
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-openfoam12-calculix-xfoil-jammy-v1
+
+      - name: Install system dependencies (OpenFOAM 12, CalculiX, xfoil, gmsh headless libs)
+        run: |
+          set -e
+          sudo add-apt-repository -y universe
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg
+          wget -q -O - https://dl.openfoam.org/gpg.key | sudo tee /etc/apt/trusted.gpg.d/openfoam.asc > /dev/null
+          echo "deb http://dl.openfoam.org/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/openfoam.list
+          sudo apt-get update
+          sudo apt-get install -y openfoam12 calculix-ccx xfoil             libglu1-mesa libxrender1 libxcursor1 libxft2 libxinerama1
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-airfoil-pipeline-deps-v1
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy scipy gmsh h5py pyvista requests beautifulsoup4 lxml
+
+      - name: Run ${{ matrix.airfoil }} through the full pipeline
+        run: python scripts/ci_run_airfoil.py ${{ matrix.airfoil }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: result-${{ matrix.airfoil }}
+          path: ci_results/${{ matrix.airfoil }}.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h5-${{ matrix.airfoil }}
+          path: .orchestrator_runs/ci_matrix/${{ matrix.airfoil }}/airfoil_${{ matrix.airfoil }}.h5
+          retention-days: 14
+          if-no-files-found: ignore
