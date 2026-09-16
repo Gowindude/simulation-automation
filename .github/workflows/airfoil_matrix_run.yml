@@ -77,6 +77,22 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
+      # Real bug found 2026-09-15: only the small JSON summary above was
+      # ever uploaded -- the actual .h5 training data
+      # (.orchestrator_runs/ci_matrix/<name>/airfoil_<name>.h5) lived
+      # only on the ephemeral runner and was destroyed with it, so a
+      # "successful" 91-job run produced zero usable training data.
+      # if-no-files-found: ignore (not warn) -- an airfoil that failed
+      # before Stage 9 legitimately has no .h5 to upload; that's not an
+      # error worth a workflow warning for every failure.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h5-${{ matrix.airfoil }}
+          path: .orchestrator_runs/ci_matrix/${{ matrix.airfoil }}/airfoil_${{ matrix.airfoil }}.h5
+          retention-days: 14
+          if-no-files-found: ignore
+
   summarize:
     needs: run-airfoil
     if: always()
