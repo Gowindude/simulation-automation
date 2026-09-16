@@ -173,7 +173,26 @@ def build_flat_arrays(records: list[dict], normalizer: Normalizer):
         sample_group:  (N,) int -- which (airfoil, AoA) sample each row
             belongs to, for diagnostics/plotting, not used in training
     """
-    branch_rows, trunk_rows, target_rows, group_rows = [], [], [], []
+    # Preallocated in one pass rather than building a Python list of
+    # per-sample arrays and np.concatenate-ing at the end -- the list+
+    # concat approach transiently holds both the list AND the final
+    # array in memory at once (~2x peak RSS), which is what pushed a
+    # 352-airfoil corpus into an OOM kill on a loaded machine. A single
+    # preallocated buffer, filled in place, has no such transient copy.
+    branch_dim = r_geom_dim = None
+    total_n = 0
+    for r in records:
+        for sample in r["samples"]:
+            total_n += len(sample["s"])
+    if records and records[0]["samples"]:
+        branch_dim = records[0]["geometry"].reshape(-1).shape[0] + 1
+
+    branch_inputs = np.empty((total_n, branch_dim or 1), dtype=np.float32)
+    trunk_inputs = np.empty((total_n, 1), dtype=np.float32)
+    targets = np.empty((total_n, 1), dtype=np.float32)
+    sample_group = np.empty((total_n,), dtype=np.int64)
+
+    offset = 0
     group_id = 0
     for r in records:
         geom_flat = r["geometry"].reshape(-1)
@@ -186,15 +205,11 @@ def build_flat_arrays(records: list[dict], normalizer: Normalizer):
             cp_norm = normalizer.transform_cp(sample["cp"])
 
             n = len(s_norm)
-            branch_rows.append(np.tile(branch_vec, (n, 1)))
-            trunk_rows.append(s_norm.reshape(-1, 1))
-            target_rows.append(cp_norm.reshape(-1, 1).astype(np.float32))
-            group_rows.append(np.full(n, group_id, dtype=np.int64))
+            branch_inputs[offset:offset + n] = branch_vec
+            trunk_inputs[offset:offset + n, 0] = s_norm
+            targets[offset:offset + n, 0] = cp_norm.astype(np.float32)
+            sample_group[offset:offset + n] = group_id
+            offset += n
             group_id += 1
 
-    return (
-        np.concatenate(branch_rows, axis=0),
-        np.concatenate(trunk_rows, axis=0),
-        np.concatenate(target_rows, axis=0),
-        np.concatenate(group_rows, axis=0),
-    )
+    return branch_inputs, trunk_inputs, targets, sample_group
