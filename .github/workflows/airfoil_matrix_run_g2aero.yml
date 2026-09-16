@@ -1,0 +1,76 @@
+# Locked target: 256 G2Aero real-airfoil shapes (NREL curated_airfoils.npz
+# real subset, already deduped against UIUC and verified through Stage 0
+# -- see data/g2aero_downloader.py / STATUS.md), each as its own matrix
+# job. 256 is GitHub Actions' hard per-matrix job cap, not an arbitrary
+# choice -- the full 358-shape G2Aero set needs a second batch later for
+# the remaining ~102.
+#
+# Same install/cache/upload approach as airfoil_matrix_run.yml
+# (verified working there for real, including the .h5 upload fix).
+name: Airfoil corpus matrix run (G2Aero batch 1)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  run-airfoil:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        airfoil: ["a6014-s", "a6522-s", "ag34", "ag3516", "ag3819", "air_100-2_acro_mm_576_1999", "ami_43", "av-1_7-8", "azcombat1", "be5030fvnc2", "be5045fvnc2", "be5655fvnc2", "be6568", "d7517-s", "da5206", "da6515", "da8000", "dp1_68_8_37_ds", "dp2_47_9_48_ds", "du00-w2-350", "du08-w-210", "du91-w2-250", "du97-w-300", "e193mod", "edge_tip", "em_cy_1016_2012", "em_cy_1016_20145", "em_j18_1_3015", "em_j18_2010_26_51", "em_j18_3010_26_51", "em_j18_3012_drw_r1_2", "emx-07", "fad05", "fad21", "fraser_f4fras15", "ga_30-010", "ga_30-012", "ga_30-014", "ga_30-016", "ga_30-018", "ga_30-020", "ga_30-213", "ga_30-216", "ga_30-218", "ga_30-220", "ga_30-311", "ga_30-317", "ga_30-319", "ga_30-410", "ga_30-412", "ga_30-414", "ga_30-416", "ga_30-418", "ga_30-420", "ga_30-610", "ga_30-613", "ga_30-615", "ga_30-617", "ga_30-619", "ga_35-218", "ga_35-220", "ga_35-313", "ga_35-316", "ga_35-319", "ga_35-418", "ga_35-420", "ga_35-617", "ga_35-619", "ga_37-016", "ga_37-615", "ga_37a014", "ga_37a020", "ga_37a216", "ga_37a220", "ga_37a317", "ga_37a319", "ga_37a414", "ga_37a416", "ga_37a420", "ga_37a619", "ga_40-412", "hg_40", "hg_43", "hm391-1", "hn-456", "hn-998", "hs_3_4_12b", "hs_510", "joukowsky_10_00__thick_4_00__camber", "joukowsky_10_00__thick_6_50__camber", "joukowsky_10_00__thick_8_50__camber", "joukowsky_11_50__thick_1_00__camber", "joukowsky_11_50__thick_3_50__camber", "joukowsky_11_50__thick_6_00__camber", "joukowsky_11_50__thick_9_00__camber", "joukowsky_13_00__thick_1_50__camber", "joukowsky_13_00__thick_4_00__camber", "joukowsky_13_00__thick_8_50__camber", "joukowsky_13_50__thick_6_00__camber", "joukowsky_14_50__thick_3_50__camber", "joukowsky_14_50__thick_7_00__camber", "joukowsky_15_00__thick_4_50__camber", "joukowsky_15_50__thick_1_00__camber", "joukowsky_15_50__thick_9_00__camber", "joukowsky_16_00__thick_6_50__camber", "joukowsky_16_50__thick_3_50__camber", "joukowsky_17_00__thick_1_50__camber", "joukowsky_17_00__thick_4_50__camber", "joukowsky_17_00__thick_8_50__camber", "joukowsky_18_00__thick_6_50__camber", "joukowsky_18_00__thick_9_50__camber", "joukowsky_18_50__thick_0_50__camber", "joukowsky_18_50__thick_3_50__camber", "joukowsky_19_00__thick_1_50__camber", "joukowsky_19_00__thick_4_50__camber", "joukowsky_19_00__thick_8_50__camber", "joukowsky_19_50__thick_5_50__camber", "joukowsky_20_00__thick_6_50__camber", "joukowsky_5_00__thick_9_00__camber", "joukowsky_6_50__thick_4_00__camber", "joukowsky_8_00__thick_9_00__camber", "jwl030", "mh_16", "mh_17", "mh_18b", "mh_53", "mid_011-0", "mid_012", "mid_021", "mid_105", "mid_113", "mid_115-7", "mid_117", "mid_122", "mid_153c", "mid_371aw", "mid_403", "mid_405e", "mid_406w2", "mid_415", "ms3_3-11gpt", "naca-63-221", "naca-63-430-v", "naca-65-415", "naca-65-421", "naca1415", "naca1418", "naca1420", "naca1424", "naca22013_5", "naca22124", "naca23015_9", "naca23121", "naca24012", "naca24014_5", "naca24019", "naca24117", "naca25113_5", "naca25121", "naca25124", "naca33113", "naca33115", "naca34018", "naca34113_5", "naca34116_5", "naca3421", "naca35014_5", "naca35113", "naca35116", "naca35118", "naca35121", "naca35124", "naca43124", "naca4324", "naca4409", "naca44119", "naca45017", "naca45019", "naca45113_5", "naca5509", "naca5512", "naca5518", "naca5521", "naca5524", "naca63-309_a_0_6", "naca63-405_a_0_5", "naca63-408_a_0_8", "naca63-411_a_0_8", "naca63-508_a_0_2", "naca63-514_a_0_0", "naca63-514_a_0_6", "naca63-516_a_0_6", "naca63-605_a_0_6", "naca63-607_a_0_5", "naca63-609_a_0_2", "naca63-613_a_0_2", "naca63-615_a_0_2", "naca63-617_a_0_2", "naca63-618_a_0_6", "naca63-619_a_0_2", "naca63-620_a_0_6", "naca63-706", "naca63-706_a_0_6", "naca63-708_a_0_5", "naca63-710_a_0_2", "naca63-710_a_0_6", "naca63-712_a_0_2", "naca63-712_a_0_5", "naca63-714_a_0_5", "naca64-216_a_0_2", "naca64-219_a_0_6", "naca64-417_a_0_0", "naca64-417_a_0_8", "naca64-510_a_0_2", "naca64-514", "naca64-518_a_0_8", "naca64-718_a_0_2", "naca64-720_a_0_2", "naca6409", "naca6415", "naca6418", "naca6421", "naca6424", "naca65-117_a_0_6", "naca65-119_a_0_5", "naca65-211_a_0_2", "naca65-213_a_0_8", "naca65-221", "naca65-312_a_0_8", "naca65-314_a_0_2", "naca65-318_a_0_0", "naca65-406_a_0_8", "naca65-411_a_0_0", "naca65-419_a_0_8", "naca65-508_a_0_5", "naca65-511_a_0_8", "naca65-515_a_0_8", "naca65-517_a_0_2", "naca65-518_a_0_5", "naca65-609_a_0_5", "naca65-611_a_0_2", "naca65-612_a_0_6", "naca65-614_a_0_6", "naca65-616_a_0_2", "naca65-616_a_0_6", "naca65-618_a_0_8", "naca65-620_a_0_8", "naca65-715_a_0_2", "naca65-715_a_0_5", "naca65-715_a_0_8", "naca65-717_a_0_5", "naca65-720_a_0_5", "naca65a307", "naca66-015", "naca66-110_a_0_5", "naca66-112_a_0_8"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache apt archives (OpenFOAM/CalculiX/xfoil .deb downloads)
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-openfoam12-calculix-xfoil-jammy-v1
+
+      - name: Install system dependencies (OpenFOAM 12, CalculiX, xfoil, gmsh headless libs)
+        run: |
+          set -e
+          sudo add-apt-repository -y universe
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg
+          wget -q -O - https://dl.openfoam.org/gpg.key | sudo tee /etc/apt/trusted.gpg.d/openfoam.asc > /dev/null
+          echo "deb http://dl.openfoam.org/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/openfoam.list
+          sudo apt-get update
+          sudo apt-get install -y openfoam12 calculix-ccx xfoil             libglu1-mesa libxrender1 libxcursor1 libxft2 libxinerama1
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-airfoil-pipeline-deps-v1
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy scipy gmsh h5py pyvista requests beautifulsoup4 lxml
+
+      - name: Run ${{ matrix.airfoil }} through the full pipeline
+        run: python scripts/ci_run_airfoil.py ${{ matrix.airfoil }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: result-${{ matrix.airfoil }}
+          path: ci_results/${{ matrix.airfoil }}.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h5-${{ matrix.airfoil }}
+          path: .orchestrator_runs/ci_matrix/${{ matrix.airfoil }}/airfoil_${{ matrix.airfoil }}.h5
+          retention-days: 14
+          if-no-files-found: ignore
