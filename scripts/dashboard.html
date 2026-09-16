@@ -215,6 +215,20 @@
   .chart-box { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
   .chart-box .chart-title { font-size: 12px; color: var(--ink-2); font-weight: 600; margin-bottom: 4px; }
   .chart-box svg { display: block; width: 100%; height: auto; }
+
+  .yield-row { display: grid; grid-template-columns: 130px 1fr 90px; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .yield-row:last-child { margin-bottom: 0; }
+  .yield-row .yield-label { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+  .yield-track { height: 20px; border-radius: 5px; overflow: hidden; display: flex; background: var(--crit-soft); }
+  .yield-fill.good { background: var(--good); height: 100%; }
+  .yield-row .yield-val { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; text-align: right; }
+
+  .case-list { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 10px; }
+  .case-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 12.5px; }
+  .case-row .name { font-family: "IBM Plex Mono", monospace; font-weight: 600; }
+  .case-pill { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 999px; }
+  .case-pill.fixed { background: var(--good-soft); color: var(--good); }
+  .case-pill.stillfailed { background: var(--crit-soft); color: var(--crit); }
   .axis-label { font-size: 9.5px; fill: var(--ink-3); font-family: "IBM Plex Mono", monospace; }
   .grid-line { stroke: var(--grid); stroke-width: 1; }
   .zero-line { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 2 3; }
@@ -269,6 +283,17 @@
       <div id="deeponet-speed-chart"></div>
     </div>
     <p class="deeponet-note" id="deeponet-note"></p>
+  </section>
+
+  <section class="panel troubleshooter-panel" id="troubleshooter-panel">
+    <div class="list-header"><h2>Stage 1 troubleshooter agent: mesh yield, with vs. without</h2></div>
+    <div class="stat-row" id="troubleshooter-stat-row"></div>
+    <div class="chart-box" id="troubleshooter-chart-box" style="margin-bottom: 14px;">
+      <div class="chart-title">Mesh yield on the same 91-airfoil batch (real A/B, same geometries, same deterministic retry schedule first)</div>
+      <div id="troubleshooter-chart"></div>
+    </div>
+    <div id="troubleshooter-cases"></div>
+    <p class="deeponet-note" id="troubleshooter-note"></p>
   </section>
 
   <div class="layout">
@@ -655,11 +680,76 @@
       "(train/val/test split by whole airfoil, see deeponet/dataset.py) &mdash; best checkpoint at epoch " + dn.best_epoch + "." + scaleNote;
   }
 
+  // Real A/B result, 2026-09-15 (STATUS.md "Troubleshooter agent" section):
+  // the same 91-airfoil batch, same 5 real checkMesh/mesh-generation
+  // failures, same deterministic retry schedule tried first in both
+  // arms -- the only variable is whether Stage 1 escalates to the LLM
+  // troubleshooter after the deterministic fix is exhausted. Not derived
+  // from dashboard_data.json (that's built from .h5 output, unrelated to
+  // this one-time A/B) -- a fixed historical result, sourced to STATUS.md.
+  var TROUBLESHOOTER_AB = {
+    n_airfoils: 91,
+    n_failed_without_agent: 5,
+    n_failed_with_agent: 1,
+    cases: [
+      { name: "as5048", outcome: "fixed" },
+      { name: "whitcomb", outcome: "fixed" },
+      { name: "ah93w257", outcome: "fixed" },
+      { name: "ah79100b", outcome: "fixed" },
+      { name: "ah93w480b", outcome: "stillfailed" }
+    ]
+  };
+
+  function yieldBar(label, nFailed, total) {
+    var nOk = total - nFailed;
+    var pct = (nOk / total * 100);
+    return (
+      '<div class="yield-row">' +
+      '<div class="yield-label">' + label + '</div>' +
+      '<div class="yield-track"><div class="yield-fill good" style="width:' + pct.toFixed(1) + '%"></div></div>' +
+      '<div class="yield-val">' + pct.toFixed(1) + '%</div>' +
+      '</div>'
+    );
+  }
+
+  function renderTroubleshooter() {
+    var ab = TROUBLESHOOTER_AB;
+    var pctWithout = (ab.n_airfoils - ab.n_failed_without_agent) / ab.n_airfoils * 100;
+    var pctWith = (ab.n_airfoils - ab.n_failed_with_agent) / ab.n_airfoils * 100;
+    var failureReduction = (1 - ab.n_failed_with_agent / ab.n_failed_without_agent) * 100;
+
+    document.getElementById("troubleshooter-stat-row").innerHTML = [
+      tile("Mesh yield, without agent", pctWithout.toFixed(1), "%", false),
+      tile("Mesh yield, with agent", pctWith.toFixed(1), "%", "speed"),
+      tile("Real failures recovered", (ab.n_failed_without_agent - ab.n_failed_with_agent) + " / " + ab.n_failed_without_agent, "airfoils", "speed"),
+      tile("Fewer airfoils lost to mesh failure", failureReduction.toFixed(0), "%", "speed")
+    ].join("");
+
+    document.getElementById("troubleshooter-chart").innerHTML =
+      yieldBar("Without agent", ab.n_failed_without_agent, ab.n_airfoils) +
+      yieldBar("With agent", ab.n_failed_with_agent, ab.n_airfoils);
+
+    document.getElementById("troubleshooter-cases").innerHTML =
+      '<div class="case-list">' +
+      ab.cases.map(function (c) {
+        var fixed = c.outcome === "fixed";
+        return '<div class="case-row"><span class="name">' + c.name + '</span>' +
+          '<span class="case-pill ' + (fixed ? "fixed" : "stillfailed") + '">' + (fixed ? "mesh now succeeds" : "still fails" ) + '</span></div>';
+      }).join("") +
+      '</div>';
+
+    document.getElementById("troubleshooter-note").innerHTML =
+      "Same 91-airfoil batch, same " + ab.n_failed_without_agent + " real checkMesh/mesh-generation failures, same deterministic retry schedule tried first in both arms &mdash; the only difference is whether Stage 1 escalates to the LLM troubleshooter once the deterministic fix is exhausted. " +
+      (ab.n_failed_without_agent - ab.n_failed_with_agent) + " of " + ab.n_failed_without_agent + " real failures now mesh successfully. " +
+      "The one remaining failure (<span class=\"mono\">ah93w480b</span>, 0.478c thickness &mdash; the most extreme outlier in the batch) is a genuinely hard case: the agent correctly diagnosed the self-intersection mechanism every attempt but couldn't find a working parameter set within the boundary-layer-only constraints it's allowed to change. See STATUS.md, “Troubleshooter agent: escalation + checkMesh-quality scope”, for the full case-by-case writeup.";
+  }
+
   function init() {
     document.getElementById("source-label").textContent =
       DATA.airfoils.length + " airfoils · real UIUC corpus · generated " + (DATA.generated_at || "");
     renderStats();
     renderDeepONet();
+    renderTroubleshooter();
     renderFilters();
     renderList();
     if (DATA.airfoils.length) selectAirfoil(DATA.airfoils[0].name);
