@@ -256,6 +256,10 @@
   <section class="panel deeponet-panel" id="deeponet-panel" hidden>
     <div class="list-header"><h2>DeepONet surrogate: speed &amp; accuracy vs. the full pipeline</h2></div>
     <div class="stat-row" id="deeponet-stat-row"></div>
+    <div class="chart-box" id="deeponet-speed-chart-box" style="margin-bottom: 14px;">
+      <div class="chart-title">Time per airfoil (log scale &mdash; the gap is too large to show linearly)</div>
+      <div id="deeponet-speed-chart"></div>
+    </div>
     <p class="deeponet-note" id="deeponet-note"></p>
   </section>
 
@@ -564,6 +568,33 @@
     return s.toFixed(1) + " s";
   }
 
+  function speedBarChart(bars) {
+    // bars: [{label, seconds, accent}]. Log10 scale -- pipeline (~1e2 s)
+    // vs. DeepONet inference (~1e-4 s) span ~6 orders of magnitude, so a
+    // linear bar would make one bar invisible. Each bar still prints its
+    // real value as text, since a log bar's LENGTH alone is misleading
+    // (a "small-looking" gap in log-space is still a huge real gap).
+    var w = 640, barH = 34, gap = 14, padL = 190, padR = 90, padTop = 10;
+    var h = padTop + bars.length * (barH + gap);
+    var vals = bars.map(function (b) { return Math.log10(Math.max(b.seconds, 1e-6)); });
+    var minLog = Math.min.apply(null, vals) - 0.5;
+    var maxLog = Math.max.apply(null, vals) + 0.5;
+    var sx = function (v) { return padL + (v - minLog) / (maxLog - minLog) * (w - padL - padR); };
+
+    var rows = bars.map(function (b, i) {
+      var y = padTop + i * (barH + gap);
+      var x0 = sx(minLog), x1 = sx(Math.log10(Math.max(b.seconds, 1e-6)));
+      var color = b.accent ? "var(--accent)" : "var(--ink-3)";
+      return (
+        '<text x="' + (padL - 10) + '" y="' + (y + barH / 2 + 4) + '" text-anchor="end" class="axis-label" style="font-size:12px;fill:var(--ink);font-weight:600;">' + b.label + '</text>' +
+        '<rect x="' + x0 + '" y="' + y + '" width="' + Math.max(2, x1 - x0) + '" height="' + barH + '" rx="6" fill="' + color + '" opacity="0.85"></rect>' +
+        '<text x="' + (x1 + 10) + '" y="' + (y + barH / 2 + 4) + '" class="axis-label" style="font-size:13px;fill:var(--ink);font-weight:600;">' + fmtSeconds(b.seconds) + '</text>'
+      );
+    }).join("");
+
+    return '<svg viewBox="0 0 ' + w + ' ' + h + '" style="width:100%;height:auto;" role="img" aria-label="Time per airfoil, pipeline vs DeepONet inference">' + rows + '</svg>';
+  }
+
   function renderDeepONet() {
     var dn = DATA.deeponet;
     var pt = DATA.pipeline_timing;
@@ -583,12 +614,32 @@
     tiles.push(tile("Test airfoils (never trained/tuned on)", dn.n_test_airfoils, "of " + (dn.n_train_airfoils + dn.n_val_airfoils + dn.n_test_airfoils), false));
     document.getElementById("deeponet-stat-row").innerHTML = tiles.join("");
 
+    var chartBox = document.getElementById("deeponet-speed-chart-box");
+    if (pt && pt.mean_seconds_per_airfoil) {
+      document.getElementById("deeponet-speed-chart").innerHTML = speedBarChart([
+        { label: "Full pipeline", seconds: pt.mean_seconds_per_airfoil, accent: false },
+        { label: "DeepONet", seconds: dn.estimated_seconds_per_airfoil, accent: true }
+      ]);
+      chartBox.hidden = false;
+    } else {
+      chartBox.hidden = true;
+    }
+
+    var scaleNote = "";
+    if (pt && pt.mean_seconds_per_airfoil) {
+      var n = 100;
+      var pipelineAtScale = pt.mean_seconds_per_airfoil * n;
+      var deeponetAtScale = dn.estimated_seconds_per_airfoil * n;
+      var pipelineStr = pipelineAtScale > 3600 ? (pipelineAtScale / 3600).toFixed(1) + " h" : fmtSeconds(pipelineAtScale);
+      scaleNote = " At " + n + " airfoils: full pipeline &asymp; " + pipelineStr + " vs. DeepONet &asymp; " + fmtSeconds(deeponetAtScale) + ".";
+    }
+
     document.getElementById("deeponet-note").innerHTML =
       "Pipeline time is real measured wall-clock per airfoil (all AoA in the sweep, WSL/gmsh/OpenFOAM/CalculiX). " +
       "DeepONet inference is measured per-query-point (" + fmtSeconds(dn.inference_seconds_per_point) + "/point, CPU) " +
       "and scaled to an estimated one-airfoil Cp(s) sweep &mdash; not a separately measured single call, so treat it as an estimate, not a benchmark. " +
       "Test RMSE is computed on " + dn.n_test_airfoils + " airfoil(s) held out from both training and checkpoint selection " +
-      "(train/val/test split by whole airfoil, see deeponet/dataset.py) &mdash; best checkpoint at epoch " + dn.best_epoch + ".";
+      "(train/val/test split by whole airfoil, see deeponet/dataset.py) &mdash; best checkpoint at epoch " + dn.best_epoch + "." + scaleNote;
   }
 
   function init() {
