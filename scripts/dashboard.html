@@ -24,6 +24,8 @@
     --crit-soft: #f6ddd6;
     --grid: #e3ddcf;
     --focus: #1c65c9;
+    --speed: #1f8f86;
+    --speed-soft: #d9ece9;
     color-scheme: light;
   }
   :root:not([data-theme="light"]) {
@@ -46,6 +48,8 @@
       --crit-soft: #3d251f;
       --grid: #2a3341;
       --focus: #6ea6f2;
+      --speed: #4fc2b7;
+      --speed-soft: #173330;
     }
   }
   :root[data-theme="dark"] {
@@ -67,6 +71,8 @@
     --crit-soft: #3d251f;
     --grid: #2a3341;
     --focus: #6ea6f2;
+    --speed: #4fc2b7;
+    --speed-soft: #173330;
   }
 
   * { box-sizing: border-box; }
@@ -123,6 +129,8 @@
   .stat-tile .value .unit { font-size: 14px; color: var(--ink-2); font-weight: 500; margin-left: 3px; }
   .stat-tile.accent { border-color: var(--accent); }
   .stat-tile.accent .value { color: var(--accent); }
+  .stat-tile.speed { border-color: var(--speed); background: var(--speed-soft); }
+  .stat-tile.speed .value { color: var(--speed); }
 
   .deeponet-panel {
     padding: 16px 18px 18px; margin-bottom: 22px;
@@ -315,7 +323,8 @@
     ].join("");
   }
   function tile(label, value, unit, accent) {
-    return '<div class="stat-tile' + (accent ? " accent" : "") + '">' +
+    var cls = accent === "speed" ? " speed" : (accent ? " accent" : "");
+    return '<div class="stat-tile' + cls + '">' +
       '<div class="label">' + label + '</div>' +
       '<div class="value tabular">' + value + (unit ? '<span class="unit">' + unit + '</span>' : '') + '</div>' +
       '</div>';
@@ -584,7 +593,7 @@
     var rows = bars.map(function (b, i) {
       var y = padTop + i * (barH + gap);
       var x0 = sx(minLog), x1 = sx(Math.log10(Math.max(b.seconds, 1e-6)));
-      var color = b.accent ? "var(--accent)" : "var(--ink-3)";
+      var color = b.accent ? "var(--speed)" : "var(--accent)";
       return (
         '<text x="' + (padL - 10) + '" y="' + (y + barH / 2 + 4) + '" text-anchor="end" class="axis-label" style="font-size:12px;fill:var(--ink);font-weight:600;">' + b.label + '</text>' +
         '<rect x="' + x0 + '" y="' + y + '" width="' + Math.max(2, x1 - x0) + '" height="' + barH + '" rx="6" fill="' + color + '" opacity="0.85"></rect>' +
@@ -608,7 +617,7 @@
     }
     tiles.push(tile("DeepONet inference / airfoil sweep (est.)", fmtSeconds(dn.estimated_seconds_per_airfoil), "", false));
     if (dn.pipeline_vs_deeponet_speedup_x) {
-      tiles.push(tile("Speedup", dn.pipeline_vs_deeponet_speedup_x + "&times;", "faster", true));
+      tiles.push(tile("Speedup", dn.pipeline_vs_deeponet_speedup_x.toLocaleString() + "&times;", "faster", "speed"));
     }
     tiles.push(tile("Held-out test C<sub>p</sub> RMSE", dn.test_rmse_cp, "", false));
     tiles.push(tile("Test airfoils (never trained/tuned on)", dn.n_test_airfoils, "of " + (dn.n_train_airfoils + dn.n_val_airfoils + dn.n_test_airfoils), false));
@@ -634,8 +643,12 @@
       scaleNote = " At " + n + " airfoils: full pipeline &asymp; " + pipelineStr + " vs. DeepONet &asymp; " + fmtSeconds(deeponetAtScale) + ".";
     }
 
+    var pipelineSourceNote = (pt && pt.source === "fallback_probe")
+      ? " Pipeline time is one real measured end-to-end run (naca0012, all 10 stages) &mdash; an n of 1, not an average across many airfoils."
+      : (pt && pt.n_airfoils_timed ? " Pipeline time is a real measured average across " + pt.n_airfoils_timed + " airfoil run(s)." : "");
+
     document.getElementById("deeponet-note").innerHTML =
-      "Pipeline time is real measured wall-clock per airfoil (all AoA in the sweep, WSL/gmsh/OpenFOAM/CalculiX). " +
+      "Pipeline time is real measured wall-clock (WSL/gmsh/OpenFOAM/CalculiX, all AoA in the sweep)." + pipelineSourceNote + " " +
       "DeepONet inference is measured per-query-point (" + fmtSeconds(dn.inference_seconds_per_point) + "/point, CPU) " +
       "and scaled to an estimated one-airfoil Cp(s) sweep &mdash; not a separately measured single call, so treat it as an estimate, not a benchmark. " +
       "Test RMSE is computed on " + dn.n_test_airfoils + " airfoil(s) held out from both training and checkpoint selection " +

@@ -21,7 +21,7 @@ def _round(x, n=4):
     return round(float(x), n)
 
 
-def extract(h5_dir: str) -> dict:
+def extract(h5_dir: str, pipeline_timing_fallback: str | None = None) -> dict:
     manifest_path = os.path.join(h5_dir, "batch_manifest.json")
     manifest = {}
     if os.path.exists(manifest_path):
@@ -92,7 +92,25 @@ def extract(h5_dir: str) -> dict:
         "n_airfoils_timed": len(timed),
         "mean_seconds_per_airfoil": _round(np.mean(timed), 1) if timed else None,
         "total_seconds": _round(np.sum(timed), 1) if timed else None,
+        "source": "manifest" if timed else None,
     }
+
+    # No timed airfoil in this h5_dir's own manifest (e.g. the CI matrix
+    # path doesn't record wall_clock_seconds) -- fall back to a single
+    # real local end-to-end measurement (one naca0012 run, all 10 stages)
+    # rather than leaving the dashboard's speed comparison silently blank.
+    # Explicitly labeled n=1 in the dashboard note, not presented as an
+    # average across many runs.
+    if not timed and pipeline_timing_fallback and os.path.exists(pipeline_timing_fallback):
+        with open(pipeline_timing_fallback) as f:
+            probe = json.load(f)
+        if probe.get("wall_clock_seconds") is not None:
+            pipeline_timing = {
+                "n_airfoils_timed": 1,
+                "mean_seconds_per_airfoil": _round(probe["wall_clock_seconds"], 1),
+                "total_seconds": _round(probe["wall_clock_seconds"], 1),
+                "source": "fallback_probe",
+            }
 
     return {
         "generated_from": h5_dir,
@@ -155,9 +173,13 @@ if __name__ == "__main__":
     parser.add_argument("h5_dir")
     parser.add_argument("--out", default="scripts/dashboard_data.json")
     parser.add_argument("--deeponet-checkpoint-dir", default="deeponet/checkpoints")
+    parser.add_argument(
+        "--pipeline-timing-fallback",
+        default=".orchestrator_runs/timing_probe2_result.json",
+    )
     args = parser.parse_args()
 
-    data = extract(args.h5_dir)
+    data = extract(args.h5_dir, pipeline_timing_fallback=args.pipeline_timing_fallback)
     data["deeponet"] = extract_deeponet_metrics(args.deeponet_checkpoint_dir, data["pipeline_timing"])
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as f:
