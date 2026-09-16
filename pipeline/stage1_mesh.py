@@ -353,6 +353,15 @@ def generate_mesh(
 
     last_output = ""
     pending_log_record = None
+    # Tracks whether the cheap deterministic BL-shrink fix has already
+    # been tried (troubleshooter-enabled runs only -- see below). Also
+    # accumulates every attempt's params so a later LLM call can see
+    # what's already failed, instead of risking a repeat of an
+    # equivalent-to-already-failed proposal (2026-09-15, after A/B
+    # testing showed as5048/whitcomb exhaust all retries on the same
+    # deterministic fix without ever reaching the agent).
+    deterministic_fix_used = False
+    attempt_history = []
     for attempt in range(1, max_retries + 1):
         script_content = _GMSH_SCRIPT_TEMPLATE.format(
             coords_json=coords_json,
@@ -377,8 +386,11 @@ def generate_mesh(
         if succeeded:
             return mesh_path
 
+        attempt_history.append({"params": dict(params), "outcome": "failed"})
+
         if attempt < max_retries:
-            if _is_bl_self_intersection_failure(last_output):
+            recognized = _is_bl_self_intersection_failure(last_output)
+            if recognized and not deterministic_fix_used:
                 # Diagnosed failure (found probing a 40%-thick synthetic
                 # airfoil, 2026-09-14/15): the boundary-layer offset
                 # self-overlaps near tight leading-edge curvature before
@@ -387,12 +399,26 @@ def generate_mesh(
                 # below *increases* bl_size on every failure, which makes
                 # this specific failure worse, not better -- confirmed
                 # empirically that *reducing* bl_size fixes it (and the
-                # resulting mesh still passes checkMesh's Gate #1).
+                # resulting mesh still passes checkMesh's Gate #1) for
+                # most cases. Tried once per run (not unlimited) when the
+                # troubleshooter is enabled -- if this one shrink doesn't
+                # resolve it, escalate to the agent rather than blindly
+                # reapplying the same move (2026-09-15 A/B finding: it
+                # doesn't always work, e.g. as5048/whitcomb). When the
+                # troubleshooter is disabled, `deterministic_fix_used`
+                # never gets set True, so this keeps reapplying every
+                # time the signature recurs -- unchanged legacy behavior.
                 params["bl_size"] = max(1e-5, params["bl_size"] * 0.3)
+                if enable_troubleshooter:
+                    deterministic_fix_used = True
             elif enable_troubleshooter:
                 current_params = dict(params)
                 try:
-                    decision = diagnose_mesh_failure(last_output, current_params, geometry_stats)
+                    decision = diagnose_mesh_failure(
+                        last_output, current_params, geometry_stats,
+                        failure_kind="gmsh_crash",
+                        previous_attempts=attempt_history or None,
+                    )
                     params["bl_size"] = decision["bl_size"]
                     params["bl_layers"] = decision["bl_layers"]
                     params["bl_ratio"] = decision["bl_ratio"]
@@ -618,9 +644,29 @@ def check_mesh(case_dir: str) -> dict:
     }
 
 
-def run_stage1(coords, name: str, output_dir: str, **mesh_kwargs) -> dict:
+def run_stage1(
+    coords, name: str, output_dir: str,
+    enable_troubleshooter: bool = False,
+    troubleshooter_log_path: str | None = None,
+    checkmesh_troubleshooter_max_retries: int = 3,
+    **mesh_kwargs,
+) -> dict:
     """
     Full Stage 1 pipeline: build+mesh domain -> gmshToFoam -> checkMesh.
+
+    If checkMesh fails the quality gate -- gmsh succeeded, but the mesh
+    itself doesn't pass, a DIFFERENT failure class from a gmsh crash
+    (generate_mesh's own enable_troubleshooter only reacts to the
+    latter) -- and enable_troubleshooter is True, retries up to
+    checkmesh_troubleshooter_max_retries times with new boundary-layer
+    parameters proposed by the agent, re-meshing and re-checking each
+    time. Off by default, same opt-in reasoning as generate_mesh's own
+    enable_troubleshooter (real Claude usage + wall time per call).
+
+    Added 2026-09-15 after A/B testing showed 2 of 5 real batch failures
+    (ah79100b, ah93w257) were checkMesh-quality rejections the
+    troubleshooter previously never saw at all -- generate_mesh's retry
+    ladder only fires on an actual gmsh exception.
 
     Returns:
         {
@@ -631,12 +677,107 @@ def run_stage1(coords, name: str, output_dir: str, **mesh_kwargs) -> dict:
 
     Raises:
         RuntimeError: if meshing or gmshToFoam fails outright (checkMesh
-                      failing the quality gate is reported, not raised).
+                      failing the quality gate is reported, not raised,
+                      even after exhausting troubleshooter retries).
     """
-    msh_path = generate_mesh(coords, name, output_dir, **mesh_kwargs)
+    msh_path = generate_mesh(
+        coords, name, output_dir,
+        enable_troubleshooter=enable_troubleshooter,
+        troubleshooter_log_path=troubleshooter_log_path,
+        **mesh_kwargs,
+    )
     case_dir = os.path.join(output_dir, f"{name}_case")
     convert_to_openfoam(msh_path, case_dir)
     check = check_mesh(case_dir)
+
+    if not check["passed"] and enable_troubleshooter:
+        # Mirrors generate_mesh's own bl_* defaults -- mesh_kwargs may
+        # not include them if the caller relied on generate_mesh's
+        # defaults, and there's no other way to recover what was
+        # actually used to produce this mesh.
+        params = {
+            "bl_size": mesh_kwargs.get("bl_size", 1e-3),
+            "bl_layers": mesh_kwargs.get("bl_layers", 10),
+            "bl_ratio": mesh_kwargs.get("bl_ratio", 1.2),
+        }
+        coords_arr = np.asarray(coords, dtype=np.float64)
+        geometry_stats = {
+            "n_points": int(len(coords_arr)),
+            "max_thickness_estimate": float(coords_arr[:, 1].max() - coords_arr[:, 1].min()),
+            "chord": 1.0,
+        }
+        retry_kwargs = dict(mesh_kwargs)
+        retry_kwargs.pop("max_retries", None)
+
+        # attempt_history records attempts actually TRIED (params +
+        # real outcome) -- appended once per iteration, after the fact,
+        # so an entry's params/outcome always describe the same attempt
+        # (not the pre-retry state relabeled as an attempt).
+        attempt_history = []
+        for _ in range(checkmesh_troubleshooter_max_retries):
+            quality_desc = (
+                "checkMesh quality gate failed (gmsh produced a mesh, but it fails "
+                "OpenFOAM's own quality thresholds -- this is NOT a gmsh crash): "
+                f"negative_volume_cells={check.get('negative_volume_cells')}, "
+                f"max_non_orthogonality_deg={check.get('max_non_orthogonality_deg')} "
+                f"(non_orthogonality_ok={check.get('non_orthogonality_ok')}), "
+                f"max_skewness={check.get('max_skewness')} (skewness_ok={check.get('skewness_ok')})."
+            )
+            try:
+                decision = diagnose_mesh_failure(
+                    quality_desc, params, geometry_stats,
+                    failure_kind="checkmesh_quality_gate",
+                    previous_attempts=attempt_history or None,
+                )
+            except Exception as e:
+                # The agent's own failure must never crash the pipeline
+                # -- stop retrying and report the last real check.
+                if troubleshooter_log_path:
+                    log_troubleshooter_call(troubleshooter_log_path, {
+                        "name": name, "gmsh_output": quality_desc, "current_params": dict(params),
+                        "outcome": "agent_error", "error": f"{type(e).__name__}: {e}",
+                    })
+                break
+
+            new_params = dict(params)
+            new_params["bl_size"] = decision["bl_size"]
+            new_params["bl_layers"] = decision["bl_layers"]
+            new_params["bl_ratio"] = decision["bl_ratio"]
+
+            # The agent's proposed params can themselves cause gmsh to
+            # crash on this retry (real finding, 2026-09-15, ah79100b) --
+            # that must count as "this retry attempt failed" and continue
+            # to the next retry, not propagate up and crash run_stage1
+            # entirely (run_stage1's own contract: checkMesh/mesh failure
+            # is reported, never raised, once troubleshooter retries are
+            # in play).
+            try:
+                msh_path = generate_mesh(
+                    coords, name, output_dir, max_retries=1, enable_troubleshooter=False,
+                    **{**retry_kwargs, **new_params},
+                )
+                convert_to_openfoam(msh_path, case_dir)
+                new_check = check_mesh(case_dir)
+                outcome = "succeeded" if new_check["passed"] else "failed"
+            except Exception as e:
+                new_check = dict(check)
+                new_check["passed"] = False
+                new_check["raw_output"] = f"retry mesh generation crashed: {type(e).__name__}: {e}"
+                outcome = "mesh_regeneration_crashed"
+
+            attempt_history.append({"params": dict(new_params), "outcome": outcome})
+            if troubleshooter_log_path:
+                log_troubleshooter_call(troubleshooter_log_path, {
+                    "name": name, "gmsh_output": quality_desc, "current_params": dict(params),
+                    "proposed_params": decision, "reasoning": decision["reasoning"],
+                    "outcome": outcome,
+                })
+
+            check = new_check
+            params = new_params
+            if check["passed"]:
+                break
+
     return {"msh_path": msh_path, "case_dir": case_dir, "check": check}
 
 

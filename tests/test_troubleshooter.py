@@ -74,6 +74,94 @@ def test_diagnose_mesh_failure_parses_valid_response(monkeypatch):
     assert "reasoning" in decision
 
 
+def test_diagnose_mesh_failure_prompt_includes_domain_knowledge(monkeypatch):
+    """The prompt should carry this pipeline's own known-pattern knowledge
+    (BL self-intersection signature, checkMesh-quality-gate framing) so
+    the agent reasons from established evidence, not a blank slate --
+    added 2026-09-15 after A/B-testing showed the bare error dump alone
+    let the agent repeat failing directions across attempts."""
+    captured = {}
+
+    def fake_run(cmd, capture_output, text, timeout, shell=False, input=None):
+        captured["prompt"] = input
+        return subprocess.CompletedProcess(cmd, 0, stdout=_fake_claude_envelope(), stderr="")
+
+    monkeypatch.setattr(troubleshooter.subprocess, "run", fake_run)
+
+    diagnose_mesh_failure(
+        gmsh_output="MESH_ERROR: Edge not recovered: 88 89 444444",
+        current_params={"bl_size": 1e-3, "bl_layers": 10, "bl_ratio": 1.2},
+        geometry_stats={"max_thickness_estimate": 0.12},
+    )
+    prompt = captured["prompt"]
+    assert "self-intersection" in prompt.lower()
+    assert "bl_ratio" in prompt  # the stack-height formula / fix-direction guidance
+
+
+def test_diagnose_mesh_failure_prompt_reflects_failure_kind(monkeypatch):
+    captured = {}
+
+    def fake_run(cmd, capture_output, text, timeout, shell=False, input=None):
+        captured["prompt"] = input
+        return subprocess.CompletedProcess(cmd, 0, stdout=_fake_claude_envelope(), stderr="")
+
+    monkeypatch.setattr(troubleshooter.subprocess, "run", fake_run)
+
+    diagnose_mesh_failure(
+        gmsh_output="max_skewness=7.5, max_non_orthogonality_deg=102.6",
+        current_params={"bl_size": 1e-3, "bl_layers": 10, "bl_ratio": 1.2},
+        geometry_stats={"max_thickness_estimate": 0.12},
+        failure_kind="checkmesh_quality_gate",
+    )
+    prompt = captured["prompt"]
+    assert "checkmesh" in prompt.lower() or "quality gate" in prompt.lower()
+
+
+def test_diagnose_mesh_failure_prompt_includes_attempt_history(monkeypatch):
+    """When previous_attempts is given, the agent must see what's already
+    been tried and failed -- otherwise nothing stops it from proposing an
+    equivalent-to-already-failed parameter set on attempt N."""
+    captured = {}
+
+    def fake_run(cmd, capture_output, text, timeout, shell=False, input=None):
+        captured["prompt"] = input
+        return subprocess.CompletedProcess(cmd, 0, stdout=_fake_claude_envelope(), stderr="")
+
+    monkeypatch.setattr(troubleshooter.subprocess, "run", fake_run)
+
+    diagnose_mesh_failure(
+        gmsh_output="MESH_ERROR: Edge not recovered: 88 89 444444",
+        current_params={"bl_size": 5e-4, "bl_layers": 8, "bl_ratio": 1.12},
+        geometry_stats={"max_thickness_estimate": 0.48},
+        previous_attempts=[
+            {"params": {"bl_size": 1e-3, "bl_layers": 10, "bl_ratio": 1.2}, "outcome": "failed"},
+            {"params": {"bl_size": 5e-4, "bl_layers": 8, "bl_ratio": 1.12}, "outcome": "failed"},
+        ],
+    )
+    prompt = captured["prompt"]
+    assert "0.0005" in prompt or "5e-4" in prompt.lower() or "0.0005" in prompt.lower()
+    assert "failed" in prompt.lower()
+
+
+def test_diagnose_mesh_failure_no_history_section_when_omitted(monkeypatch):
+    """No previous_attempts given (the first-attempt case) shouldn't
+    fabricate a history section or crash formatting it."""
+    captured = {}
+
+    def fake_run(cmd, capture_output, text, timeout, shell=False, input=None):
+        captured["prompt"] = input
+        return subprocess.CompletedProcess(cmd, 0, stdout=_fake_claude_envelope(), stderr="")
+
+    monkeypatch.setattr(troubleshooter.subprocess, "run", fake_run)
+
+    diagnose_mesh_failure(
+        gmsh_output="MESH_ERROR: Could not find extruded node (0.1, 0.2, 1) in surface 42",
+        current_params={"bl_size": 1e-3, "bl_layers": 10, "bl_ratio": 1.2},
+        geometry_stats={"max_thickness_estimate": 0.12},
+    )
+    assert captured["prompt"]  # formatted without raising
+
+
 def test_diagnose_mesh_failure_raises_on_nonzero_returncode(monkeypatch):
     def fake_run(cmd, capture_output, text, timeout, shell=False, input=None):
         return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="claude: command failed")
@@ -206,7 +294,8 @@ def test_troubleshooter_used_for_unrecognized_signature_when_enabled(monkeypatch
 
     diagnose_calls = []
 
-    def fake_diagnose(gmsh_output, current_params, geometry_stats, timeout=90):
+    def fake_diagnose(gmsh_output, current_params, geometry_stats, timeout=90,
+                       failure_kind="gmsh_crash", previous_attempts=None):
         diagnose_calls.append((gmsh_output, current_params, geometry_stats))
         return {"reasoning": "test", "bl_size": 2e-4, "bl_layers": 6, "bl_ratio": 1.1}
 
@@ -223,6 +312,86 @@ def test_troubleshooter_used_for_unrecognized_signature_when_enabled(monkeypatch
     assert current_params["bl_size"] == 1e-3
     assert "max_thickness_estimate" in geometry_stats
     assert calls["n"] == 2
+
+
+_RECOGNIZED_SELF_INTERSECTION_ERROR = (
+    "Info    : [  0%] :-( There are 2 intersections in the 1D mesh (curves 13 282)\n"
+    "MESH_ERROR: Edge not recovered: 88 89 444444\n"
+)
+
+
+def test_deterministic_fix_tried_once_then_escalates_to_troubleshooter(monkeypatch, tmp_path):
+    """2026-09-15 A/B finding: as5048/whitcomb both hit the recognized
+    self-intersection signature and exhausted every retry reapplying the
+    same deterministic shrink, never reaching the agent. When the
+    troubleshooter is enabled, a SECOND occurrence of the same recognized
+    signature must escalate to the agent instead of blindly reapplying
+    the deterministic fix again."""
+    import pipeline.stage1_mesh as stage1_mesh
+
+    call_count = {"n": 0}
+
+    def fake_run(cmd, capture_output, text, timeout, shell=False, input=None):
+        call_count["n"] += 1
+        if call_count["n"] < 3:
+            return subprocess.CompletedProcess(cmd, 1, stdout=_RECOGNIZED_SELF_INTERSECTION_ERROR, stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="MESH_SUCCESS", stderr="")
+
+    monkeypatch.setattr(stage1_mesh.subprocess, "run", fake_run)
+
+    diagnose_calls = []
+
+    def fake_diagnose(gmsh_output, current_params, geometry_stats, timeout=90,
+                       failure_kind="gmsh_crash", previous_attempts=None):
+        diagnose_calls.append({"current_params": current_params, "previous_attempts": previous_attempts})
+        return {"reasoning": "escalated", "bl_size": 1e-4, "bl_layers": 5, "bl_ratio": 1.1}
+
+    monkeypatch.setattr(stage1_mesh, "diagnose_mesh_failure", fake_diagnose)
+
+    coords = _naca4_coords(0.0, 0.0, 0.12)
+    stage1_mesh.generate_mesh(
+        coords, "escalation_test", str(tmp_path), max_retries=3,
+        enable_troubleshooter=True, bl_size=1e-3,
+    )
+
+    # First recognized failure -> deterministic fix, no LLM call yet.
+    # Second recognized failure (same signature again) -> escalates.
+    assert len(diagnose_calls) == 1
+    assert diagnose_calls[0]["current_params"]["bl_size"] == pytest.approx(1e-3 * 0.3)
+    assert diagnose_calls[0]["previous_attempts"] is not None
+    assert len(diagnose_calls[0]["previous_attempts"]) == 2
+
+
+def test_troubleshooter_disabled_keeps_reapplying_deterministic_fix(monkeypatch, tmp_path):
+    """Legacy behavior, unchanged: with the troubleshooter off,
+    a recurring recognized signature keeps getting the deterministic
+    shrink every time (never escalates, since there's nowhere to
+    escalate to)."""
+    import pipeline.stage1_mesh as stage1_mesh
+
+    call_count = {"n": 0}
+
+    def fake_run(cmd, capture_output, text, timeout, shell=False, input=None):
+        call_count["n"] += 1
+        if call_count["n"] < 3:
+            return subprocess.CompletedProcess(cmd, 1, stdout=_RECOGNIZED_SELF_INTERSECTION_ERROR, stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="MESH_SUCCESS", stderr="")
+
+    monkeypatch.setattr(stage1_mesh.subprocess, "run", fake_run)
+
+    diagnose_calls = []
+    monkeypatch.setattr(
+        stage1_mesh, "diagnose_mesh_failure",
+        lambda *a, **k: diagnose_calls.append(1) or {},
+    )
+
+    coords = _naca4_coords(0.0, 0.0, 0.12)
+    stage1_mesh.generate_mesh(
+        coords, "legacy_test", str(tmp_path), max_retries=3,
+        enable_troubleshooter=False, bl_size=1e-3,
+    )
+
+    assert not diagnose_calls
 
 
 def test_troubleshooter_applies_proposed_params(monkeypatch, tmp_path):

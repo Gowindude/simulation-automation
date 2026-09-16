@@ -138,6 +138,123 @@ Not yet re-run for real after these fixes -- next step is triggering
 the workflow again to confirm the actual solve now completes (or fails
 with a real, fast, legible error if something else is still wrong).
 
+### Troubleshooter agent: escalation + checkMesh-quality scope + richer prompt, A/B tested for real (2026-09-15)
+
+Per explicit user request ("A/B test option 2 and 3") after the
+91-airfoil matrix run's 5 real failures, extended `pipeline/troubleshooter.py`
+and its `stage1_mesh.py`/`run_stage1` integration in three ways, then
+ran the agent for real (not mocked) against all 5 originally-failing
+airfoils to measure actual effect, not just unit-test correctness:
+
+1. **Richer prompt** (`_DOMAIN_KNOWLEDGE` block in troubleshooter.py):
+   the pipeline's own known failure-pattern knowledge (BL self-
+   intersection stack-height math, checkMesh-quality-gate framing,
+   "don't just shrink the same direction again if it already failed")
+   is now given to the agent explicitly, plus a `previous_attempts`
+   history list so it can see what's already been tried on THIS
+   airfoil rather than reasoning from a blank slate each call.
+2. **Escalation in `generate_mesh`** (Change A): the deterministic
+   BL-shrink fix for a recognized self-intersection signature is now
+   tried once per run when the troubleshooter is enabled, not
+   unlimited times -- a second occurrence of the same recognized
+   signature escalates to the agent instead of blindly reapplying a
+   fix that already didn't work. Troubleshooter-disabled runs keep the
+   exact old unlimited-reapplication behavior (unchanged).
+3. **New scope: checkMesh quality-gate failures** (Change B,
+   `run_stage1`): previously the troubleshooter only reacted to an
+   actual gmsh crash inside `generate_mesh` -- a mesh that gmsh
+   produces successfully but that fails OpenFOAM's own `checkMesh`
+   thresholds (non-orthogonality/skewness) was never seen by the agent
+   at all. `run_stage1` now retries (up to
+   `checkmesh_troubleshooter_max_retries`, default 3) with agent-
+   proposed params, re-meshing and re-checking each time, reusing
+   `diagnose_mesh_failure` with `failure_kind="checkmesh_quality_gate"`
+   (same function, different failure-kind framing and a quality-metrics
+   description instead of gmsh stdout).
+
+**Real A/B result against the 91-airfoil batch's 5 failures**:
+`as5048`, `whitcomb` (recognized-signature escalation), `ah93w257`
+(new checkMesh-quality scope), and `ah79100b` (checkMesh-quality scope,
+after a bug fix below) now mesh successfully. `ah93w480b` (0.478c
+thickness -- the most extreme outlier in the batch) still fails after
+4 real attempts even with the richer prompt and full attempt history --
+a genuinely hard case, not a bug; the agent's own reasoning was sound
+each time (correctly diagnosed the tight-LE-curvature self-intersection
+mechanism) but couldn't find a working parameter set within the given
+BL-only constraints.
+
+**Real bug found by this real (non-mocked) test, not caught by unit
+tests**: `run_stage1`'s new checkMesh-retry loop called `generate_mesh`
+again with the agent's proposed params but didn't wrap that call in
+try/except -- when the proposed params themselves caused a gmsh crash
+on the retry (exactly what happened for `ah79100b`), the exception
+propagated straight through `run_stage1` instead of being treated as
+"this retry attempt failed, try the next one," violating run_stage1's
+own "checkMesh/mesh failure is reported, never raised" contract. Fixed:
+the retry's `generate_mesh` call is now wrapped, a crash is logged as
+outcome `"mesh_regeneration_crashed"` and the loop continues. Covered
+by a regression test (`test_regenerate_mesh_raising_during_retry_does_not_crash_run_stage1`)
+reproducing the exact real failure mode. All existing mocked unit tests
+used a `generate_mesh` stub that always succeeded, so this path was
+genuinely untested until the real run surfaced it -- a concrete example
+of why "verified against mocks" and "verified for real" are different
+claims for this kind of agent-in-the-loop code.
+
+New test coverage: `tests/test_troubleshooter.py` (+8: prompt content,
+attempt-history rendering, escalation-after-one-deterministic-try,
+troubleshooter-disabled-keeps-legacy-behavior), new
+`tests/test_stage1_run_stage1_troubleshooter.py` (7 tests: off-by-
+default, checkmesh_quality_gate failure_kind, early-stop-on-pass,
+retry-exhaustion, agent-error-doesn't-crash, history growth, and the
+mesh-regeneration-crash regression). Full local suite (troubleshooter +
+stage1_mesh + the new file + orchestrator, excluding real-hardware/real-
+LLM-gated tests) -- 68 passed.
+
+### Troubleshooter agent: actually deployed (2026-09-15, same night)
+
+Real gap caught by the user asking "is there anything else you said was
+being used even if it wasn't": every troubleshooter test/A/B result
+above was produced by calling `run_stage1` directly in a throwaway
+script -- `enable_troubleshooter` was never reachable from
+`orchestrator.run_single_airfoil` (and therefore not from `run_batch`,
+the CI matrix scripts, or anything a real batch run actually calls).
+The measured 94.5% -> 98.9% yield improvement was real for the 5 cases
+tested, but not something any real pipeline run would ever have
+benefited from as the code stood.
+
+Fixed: `run_single_airfoil` now reads `enable_troubleshooter`/
+`troubleshooter_log_path` from the spec dict and forwards them to
+`run_stage1` (2 new tests, `tests/test_orchestrator.py`). Also confirmed
+the reverse gap and its actual shape: the troubleshooter shells out to
+the LOCAL `claude` CLI, authenticated against this machine's Claude
+subscription -- a fresh GH Actions runner has neither the CLI nor any
+auth session (would need a paid `ANTHROPIC_API_KEY` secret, a different
+billing model, to run there). Deployed shape, per explicit user
+decision: GH Actions does the cheap, fully-parallel deterministic-only
+bulk pass (as already built); whatever it can't mesh gets picked up for
+a local second pass. Built `scripts/local_recovery_run.py` for this --
+`find_failed_airfoils()` reads downloaded `gh run download <id>
+--pattern "result-*"` artifacts (real structure confirmed: each job's
+result nests in its own `result-<name>/<name>.json` subdirectory, not a
+flat directory -- caught by testing against a real download, not
+assumed) and re-runs each one through the real `run_single_airfoil`
+path with the troubleshooter on. Verified for real end-to-end (not
+mocked): ran it against the actual 91-airfoil GH Actions run's
+artifacts, correctly found the exact same 5 real failures, then ran the
+full tool (not just Stage 1) on `as5048` -- meshed successfully, full
+CFD/FEA chain completed, `status: "success"`.
+
+Also caught in the same audit and fixed: the published dashboard
+Artifact was stale (`scripts/dashboard_publish.html` had zero
+occurrences of the new DeepONet panel the dashboard.html source had
+gained earlier the same night -- the embed+publish step was never
+re-run after the panel was added). Rebuilt and republished for real.
+
+**Still open, explicit user decision pending**: the 86 successful `.h5`
+files from the real 91-airfoil GH Actions run exist only as per-job
+GitHub artifacts, not merged into the local `.orchestrator_runs/`
+corpus (still 41 airfoils) or used in any DeepONet retrain yet.
+
 ### Known flaky/load-sensitive real-hardware test (observed, not fixed, 2026-09-15)
 
 `test_orchestrator_real_multi_airfoil.py::test_real_parallel_batch_converges_with_no_corruption_and_beats_serial`

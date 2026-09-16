@@ -125,6 +125,13 @@ def run_single_airfoil(spec, output_dir):
     span = spec.get("span", DEFAULT_SPAN)
     spar_locations = spec.get("spar_locations", DEFAULT_SPAR_LOCATIONS)
     rib_spacing = spec.get("rib_spacing", DEFAULT_RIB_SPACING)
+    # Off by default, matching run_stage1/generate_mesh's own opt-in
+    # reasoning (real Claude usage + wall time per call) -- see
+    # pipeline/troubleshooter.py. Was previously only reachable by
+    # calling run_stage1 directly in a throwaway script; a spec asking
+    # for it now actually gets it (STATUS.md, 2026-09-15).
+    enable_troubleshooter = spec.get("enable_troubleshooter", False)
+    troubleshooter_log_path = spec.get("troubleshooter_log_path")
 
     t0 = time.time()
 
@@ -134,7 +141,11 @@ def run_single_airfoil(spec, output_dir):
         return _failure(name, "geometry_mesh", exc, time.time() - t0)
 
     try:
-        stage1 = run_stage1(coords, name, airfoil_dir)
+        stage1 = run_stage1(
+            coords, name, airfoil_dir,
+            enable_troubleshooter=enable_troubleshooter,
+            troubleshooter_log_path=troubleshooter_log_path,
+        )
     except Exception as exc:
         return _failure(name, "geometry_mesh", exc, time.time() - t0)
     if not stage1["check"]["passed"]:

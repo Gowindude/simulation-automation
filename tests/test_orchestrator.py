@@ -370,6 +370,53 @@ def test_checkmesh_gate_failure_halts_airfoil_as_geometry_mesh(monkeypatch, tmp_
     assert not stage2_called, "Stage 2 must never run against a mesh that failed checkMesh"
 
 
+def test_enable_troubleshooter_is_forwarded_from_spec_to_run_stage1(monkeypatch, tmp_path):
+    """Real gap found 2026-09-15: pipeline/troubleshooter.py's Stage 1
+    agent (escalation + checkMesh-quality retries, both A/B tested for
+    real that same night) was never actually reachable through
+    run_single_airfoil/run_batch -- every real test of it called
+    run_stage1 directly in a throwaway script. A spec that asks for it
+    must actually receive it, or the yield improvement measured never
+    reaches a real batch run."""
+    monkeypatch.setattr(orchestrator, "load_airfoil", lambda dat_path: object())
+
+    received_kwargs = {}
+
+    def fake_run_stage1(coords, name, output_dir, **kwargs):
+        received_kwargs.update(kwargs)
+        return {"msh_path": "x.msh", "case_dir": "x_case", "check": {"passed": True}}
+
+    monkeypatch.setattr(orchestrator, "run_stage1", fake_run_stage1)
+    monkeypatch.setattr(orchestrator, "generate_case", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("stop")))
+
+    spec = make_spec("naca0012")
+    spec["enable_troubleshooter"] = True
+    spec["troubleshooter_log_path"] = "some/log/path.jsonl"
+    orchestrator.run_single_airfoil(spec, str(tmp_path))
+
+    assert received_kwargs.get("enable_troubleshooter") is True
+    assert received_kwargs.get("troubleshooter_log_path") == "some/log/path.jsonl"
+
+
+def test_troubleshooter_defaults_to_disabled_when_not_in_spec(monkeypatch, tmp_path):
+    """Opt-in, matching generate_mesh/run_stage1's own default -- a spec
+    that doesn't ask for it must not silently enable real Claude usage."""
+    monkeypatch.setattr(orchestrator, "load_airfoil", lambda dat_path: object())
+
+    received_kwargs = {}
+
+    def fake_run_stage1(coords, name, output_dir, **kwargs):
+        received_kwargs.update(kwargs)
+        return {"msh_path": "x.msh", "case_dir": "x_case", "check": {"passed": True}}
+
+    monkeypatch.setattr(orchestrator, "run_stage1", fake_run_stage1)
+    monkeypatch.setattr(orchestrator, "generate_case", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("stop")))
+
+    orchestrator.run_single_airfoil(make_spec("naca0012"), str(tmp_path))
+
+    assert received_kwargs.get("enable_troubleshooter") is False
+
+
 def test_per_aoa_solver_crash_is_recorded_not_raised(monkeypatch, tmp_path):
     """A crash in Stage 2/3/4 for one AoA (solver-side, out of agent
     scope per the spec) must not abort the whole airfoil -- it's logged
