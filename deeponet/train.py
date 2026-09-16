@@ -183,8 +183,10 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--val-fraction", type=float, default=0.15)
     parser.add_argument("--test-fraction", type=float, default=0.15)
+    parser.add_argument("--out-dir", default="deeponet/checkpoints")
     args = parser.parse_args()
     train(
         args.h5_dir, epochs=args.epochs, batch_size=args.batch_size, lr=args.lr,
         val_fraction=args.val_fraction, test_fraction=args.test_fraction,
+        out_dir=args.out_dir,
     )

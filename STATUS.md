@@ -1325,3 +1325,136 @@ predates the pivot above. `agents/`, `physics_cores/ansys_fluent/`, and
 were removed from this branch. `CLAUDE.md` has not yet been updated to
 match — treat its 6-agent table and Ansys-specific gotchas as historical
 context, not current status, until it's revised.
+
+## Overnight session, 2026-09-15/16: three real retrain cycles, deployed model, generalization probe
+
+Ahead of a same-day demo, ran an unattended overnight loop: wait for a
+GH Actions CI batch to finish -> download+merge its `.h5` output into
+the growing corpus -> retrain DeepONet -> republish both dashboards
+(Claude Artifact + GitHub Pages) -> dispatch the next CI batch if time
+remained. Three corpus-growth cycles actually completed for real:
+
+| Corpus | Airfoils (train/val/test) | Best val_loss | Test RMSE (Cp) |
+|---|---|---|---|
+| 127 (original, re-trained fresh into `deeponet/checkpoints_old127/` for comparison) | 87/19/19 | 0.685 | 0.690 |
+| 349 (cycle 1: 127 + G2Aero batch 1) | 245/52/52 | 0.513 | 0.449 |
+| 445 (cycle 2: + G2Aero batch 2) | 311/67/67 | 0.329 | 0.524 |
+| **684 (cycle 3, final, deployed)** | 478/103/103 | **0.303** | 0.566 |
+
+**val_loss (the checkpoint-selection metric) improved monotonically every
+cycle** -- the model got real, measurable better the whole night. Test
+RMSE did *not* trend down monotonically, and that's expected, not a
+red flag: each cycle re-splits its own (differently-sized, differently-
+composed) corpus at random, so the test airfoils are a different set
+each time, not the same holdout re-scored. Cycle 3's test draw skews
+toward the more obscure/novelty UIUC batch-3 shapes (`coanda1/2/3`,
+`dormoy`, `drgnfly`, etc.), which are genuinely harder. The rigorous
+fix for future runs: lock one fixed held-out airfoil set across every
+retrain cycle so RMSE is directly comparable cycle to cycle -- not done
+tonight, worth doing before the next round of retraining.
+
+**Real bugs found and fixed during the overnight run** (see git log on
+`feature/mesh-agent` from ~2026-09-15 23:00 to 2026-09-16 08:00 for the
+actual commits):
+- `python deeponet/train.py` vs `python -m deeponet.train` -- the
+  former breaks the `deeponet` package import when invoked from a
+  driver script; only `-m` form works from a repo-root cwd.
+- `deeponet/dataset.py::build_flat_arrays` rebuilt to preallocate one
+  buffer instead of list-of-arrays + `np.concatenate`, which held ~2x
+  peak RSS transiently -- directly caused an OOM kill on a 352-airfoil
+  corpus.
+- Repeated "low memory" kills of the background retrain were, on
+  inspection, largely caused by **orphaned zombie processes**: killing
+  a tracked background bash task does not reliably kill the actual
+  Python child it spawned (confirmed multiple times via `Get-Process`
+  -- a "stopped" task's `python -m deeponet.train` kept running,
+  accumulating CPU/RAM, and competing with the next attempt). Always
+  verify+kill the actual PID after stopping a background training task,
+  don't trust the task-stop alone.
+- `epochs=800` was wasteful by 5-8x -- real evidence (127-corpus run)
+  showed best val_loss at epoch 27 of 800, with everything after that
+  just overfitting further. Cut to `epochs=150` for all subsequent
+  cycles; every cycle's actual best epoch landed well under 60.
+  `batch_size` increases did NOT help (model is CPU compute-bound, not
+  Python-loop-overhead-bound, confirmed via an isolated eager-mode
+  benchmark at ~274ms/step) -- reverted to the original 256.
+  `torch.compile` was researched and briefly tried but not adopted (not
+  worth the multi-minute compile overhead + Windows flakiness for an
+  unproven, likely-small gain here).
+- `merge_h5`'s `shutil.rmtree` could hit a transient `PermissionError`
+  (a lingering file handle from another process) -- now retries with
+  backoff instead of crashing the cycle.
+- `gh run download` refuses to overwrite an existing file -- a stale
+  destination dir from an earlier interrupted attempt aborted a whole
+  batch download on the first name collision. Fixed by always starting
+  from a fresh destination dir.
+- The driver's dispatch-a-CI-batch step wasn't idempotent across
+  restarts -- a crash-and-retry re-dispatched an entire duplicate
+  100+-job CI batch (wasted, though harmless since `merge_h5` dedupes
+  by airfoil name). Fixed with a persistent
+  `.orchestrator_runs/driver_state.json` recording which GH run IDs
+  and which cycles' merge/retrain steps already completed, so a
+  restart resumes instead of redoing.
+- A failed CI-batch dispatch (couldn't resolve the new run's ID) was
+  being treated as "nothing more to do, exit cleanly" -- silently
+  stopped the whole pipeline for hours without it looking like a
+  failure. Fixed to exit non-zero so a supervising retry loop notices.
+- Near the very end, the local bash/MSYS environment itself ran out of
+  process/fork resources after a long night of spawning background
+  tasks (`dofork: ... Resource temporarily unavailable`), corrupting
+  the exit code of the in-flight cycle-3 retrain and losing that
+  checkpoint (the training itself had actually finished cleanly and
+  showed good numbers -- only the save/handoff was lost to the corrupt
+  process). Recovered by re-running that one retrain directly in the
+  foreground/isolated, without the fragile supervisor-loop layering,
+  once system resources were healthy again in the morning.
+
+**Held-out generalization probe** (2026-09-16 morning, real CFD ground
+truth throughout, script at
+`.orchestrator_runs/full_generalization_probe.py` -- not committed,
+scratch; results saved to
+`.orchestrator_runs/full_generalization_results.json`, also not
+committed/gitignored -- re-run the script to reproduce):
+
+Compares the old (127-corpus) and new (684-corpus, deployed) checkpoints
+on airfoils neither model ever trained on (`naca4412`, `fx76mp140`,
+`e678`, `e817` -- picked from the ~1275 UIUC airfoils still completely
+untouched by any corpus), at both AoA values in the standard training
+sweep (-2/2/6/10/14 deg) and AoA values never in ANY training sweep
+(4/8 deg, run in the same CFD sweep as the standard angles).
+`fx76mp140` failed Stage 0 (real geometry rejection, not a bug/CI
+issue) -- 3 of 4 airfoils produced usable data:
+
+| Airfoil | old127 known-AoA | old127 unknown-AoA | new684 known-AoA | new684 unknown-AoA |
+|---|---|---|---|---|
+| naca4412 | 0.592 | 0.301 | 0.188 | 0.204 |
+| e678 | 0.472 | 0.519 | 0.326 | 0.210 |
+| e817 (outlier) | 0.711 | 0.492 | 1.715 | 1.477 |
+
+New model is clearly better on 2 of 3 (roughly half the error, both at
+known and unknown AoA); `e817` is a genuine outlier where the new
+model does markedly worse -- not investigated further, worth a look
+before citing this as an unqualified improvement. Excluding `e817`:
+mean known-AoA RMSE 0.53 (old) -> 0.26 (new); mean unknown-AoA RMSE
+0.41 (old) -> 0.21 (new).
+
+Also probed "known airfoil (in new684's training set), unknown AoA"
+using `e547` and `e334` (both from `deeponet/checkpoints/normalizer.json`'s
+`train_airfoils` list): RMSE 0.135 (e547, good) vs. 0.796 (e334,
+poor) -- same story, real per-airfoil variance rather than a uniform
+result.
+
+**What's deployed right now**: both dashboards (Claude Artifact
+`https://claude.ai/artifact/52718X1hmejEiZ8wzV5HK3` and GitHub Pages
+`https://gowindude.github.io/simulation-automation/`) reflect the
+684-airfoil, test_rmse_cp=0.566 checkpoint at `deeponet/checkpoints/`.
+The demo-prep explainer artifact (architecture, decisions, metrics,
+challenges, lessons, dashboard glossary) is at
+`https://claude.ai/artifact/PoSfxa3ncXdDfqryfTAZCM`, kept in sync with
+the numbers above as of this session.
+
+**Not yet done, worth picking up next**: fix the test-set-instability
+issue with a fixed cross-cycle holdout set; investigate the `e817`
+outlier; decide whether to keep `deeponet/train.py --out-dir` (added
+tonight, small/safe) as a documented CLI option or fold the old-127
+comparison checkpoint into a permanent regression baseline.
