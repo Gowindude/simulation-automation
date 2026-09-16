@@ -255,6 +255,52 @@ files from the real 91-airfoil GH Actions run exist only as per-job
 GitHub artifacts, not merged into the local `.orchestrator_runs/`
 corpus (still 41 airfoils) or used in any DeepONet retrain yet.
 
+### Corpus grows 41 -> 127, GitHub Pages deployment, retrain shows real improvement (2026-09-16)
+
+Fixed a real bug in the matrix workflow: it only ever uploaded each
+job's small JSON summary as an artifact, not the actual `.h5` output --
+the "successful" 91-airfoil run had produced zero usable training data,
+since `.h5` files lived only on the ephemeral runner and were destroyed
+with it. Added a second `upload-artifact` step
+(`if-no-files-found: ignore`, since a pre-Stage-9 failure legitimately
+has none). Re-ran the fixed workflow: 86 real `.h5` files this time,
+downloaded and merged into `.orchestrator_runs/real_uiuc_35/` (their
+`source_file` metadata resolves correctly against the committed
+`tests/fixtures/real_uiuc/*.dat`, verified before trusting them).
+
+**Retrained on the merged 127-airfoil corpus** (587 -> 586 samples after
+filtering zero-converged-AoA airfoils; 87 train / 19 val / 19 test):
+held-out **test_rmse_Cp improved from 1.155 (41-airfoil run) to 0.696
+(127-airfoil run) -- a real ~40% accuracy gain from the larger corpus**,
+not just more data for its own sake. Best checkpoint still at a very
+early epoch (27/800) with the same overfitting-after-that pattern as
+every prior run -- 127 airfoils is still thin for this model's capacity.
+
+**GitHub Pages deployed** (`docs/index.html` on `main`, enabled via
+`gh api POST .../pages`) as a second dashboard access point alongside
+the Claude Artifact -- public, no account needed:
+https://gowindude.github.io/simulation-automation/. Update by
+re-running `build_dashboard_data.py` + `embed_dashboard_data.py` and
+copying the result into `docs/index.html`.
+
+**Dashboard**: added a log-scale horizontal bar chart (pipeline vs.
+DeepONet inference time) -- linear scale can't show a ~6-order-of-
+magnitude gap on one chart, so log10 scale with real values printed on
+each bar (bar *length* alone would be misleading at this range). Also
+an "at N airfoils" note translating the abstract speedup multiplier
+into elapsed time.
+
+**G2Aero corpus actually used for the first time**: 256 of the 358
+converted G2Aero airfoils (GitHub Actions' hard per-matrix-job cap, not
+an arbitrary number) committed to `tests/fixtures/real_uiuc/` (zero
+name collisions with the existing 135) and run through a new
+`airfoil_matrix_run_g2aero.yml` workflow -- same install/cache/upload
+pattern as the fixed UIUC workflow. The troubleshooter agent is NOT
+enabled for either CI workflow (by design -- GH Actions runners have no
+local `claude` CLI/subscription auth); any CI failures get picked up by
+`scripts/local_recovery_run.py`'s local second pass, same as the first
+91-airfoil batch. Remaining ~102 G2Aero airfoils need a second batch.
+
 ### Known flaky/load-sensitive real-hardware test (observed, not fixed, 2026-09-15)
 
 `test_orchestrator_real_multi_airfoil.py::test_real_parallel_batch_converges_with_no_corruption_and_beats_serial`
