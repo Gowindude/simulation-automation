@@ -1,0 +1,71 @@
+# Locked target: the remaining 102 G2Aero real-airfoil shapes not covered
+# by batch 1 (airfoil_matrix_run_g2aero.yml's 256) -- completes the full
+# 358-shape G2Aero real subset. Same install/cache/upload approach,
+# verified working in batch 1.
+name: Airfoil corpus matrix run (G2Aero batch 2)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  run-airfoil:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        airfoil: ["naca66-114_a_0_0", "naca66-117_a_0_0", "naca66-119_a_0_0", "naca66-209_a_0_2", "naca66-211_a_0_6", "naca66-215_a_0_0", "naca66-218_a_0_0", "naca66-220_a_0_2", "naca66-305_a_0_5", "naca66-307_a_0_0", "naca66-313_a_0_6", "naca66-314_a_0_0", "naca66-315_a_0_5", "naca66-316_a_0_0", "naca66-317_a_0_5", "naca66-319_a_0_2", "naca66-320_a_0_6", "naca66-407_a_0_5", "naca66-411_a_0_5", "naca66-412_a_0_0", "naca66-414_a_0_5", "naca66-416_a_0_5", "naca66-418_a_0_2", "naca66-419_a_0_5", "naca66-505_a_0_6", "naca66-507_a_0_8", "naca66-509_a_0_8", "naca66-510_a_0_5", "naca66-512_a_0_5", "naca66-513_a_0_2", "naca66-515_a_0_2", "naca66-516_a_0_8", "naca66-517_a_0_2", "naca66-518_a_0_5", "naca66-520_a_0_2", "naca66-520_a_0_8", "naca66-607_a_0_6", "naca66-614_a_0_2", "naca66-614_a_0_8", "naca66-615_a_0_5", "naca66-616_a_0_2", "naca66-617_a_0_5", "naca66-619_a_0_5", "naca66-710_a_0_6", "naca66-711_a_0_2", "naca66-712_a_0_6", "naca66-713_a_0_2", "naca66-714_a_0_6", "naca66-716_a_0_6", "naca66-718_a_0_0", "naca66-720_a_0_2", "naca66-720_a_0_5", "naca66a711", "naca66a713", "naca66a715", "naca66a717", "naca67-105_a_0_2", "naca67-108_a_0_8", "naca67-112_a_0_0", "naca67-114_a_0_5", "naca67-206_a_0_0", "naca67-213_a_0_8", "naca67-308_a_0_8", "naca67-310_a_0_0", "naca67-311_a_0_8", "naca67-409_a_0_8", "naca67-412_a_0_5", "naca67-413_a_0_0", "naca67-508_a_0_0", "naca67-513_a_0_5", "naca67-608_a_0_8", "naca67-609_a_0_0", "naca67-609_a_0_5", "naca67-611_a_0_2", "naca67-612_a_0_5", "naca67-707_a_0_8", "nasa_ls_1_-0417", "nasa_ls_1_-0417mod", "nasa_ms_1_-0317", "nm_retro_tip_for_30__ailerons", "nm_spatz_13_", "nm_spatz_tip_for_50__ailerons", "s807", "s808", "s809", "s812", "s819", "s821", "s822", "s831", "s832", "sb99a22co", "tsagi_b_12_5__thick", "tsagi_b_14_5__thick", "tsagi_b_16_0__thick", "tsagi_b_18_5__thick", "tsagi_b_20_0__thick", "tsagi_b_21_5__thick", "tsagi_b_23_0__thick", "tsagi_b_8_0__thick", "tsagip-ii-15_5", "tsagir-3am-c16-f6"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache apt archives (OpenFOAM/CalculiX/xfoil .deb downloads)
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-openfoam12-calculix-xfoil-jammy-v1
+
+      - name: Install system dependencies (OpenFOAM 12, CalculiX, xfoil, gmsh headless libs)
+        run: |
+          set -e
+          sudo add-apt-repository -y universe
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg
+          wget -q -O - https://dl.openfoam.org/gpg.key | sudo tee /etc/apt/trusted.gpg.d/openfoam.asc > /dev/null
+          echo "deb http://dl.openfoam.org/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/openfoam.list
+          sudo apt-get update
+          sudo apt-get install -y openfoam12 calculix-ccx xfoil             libglu1-mesa libxrender1 libxcursor1 libxft2 libxinerama1
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-airfoil-pipeline-deps-v1
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy scipy gmsh h5py pyvista requests beautifulsoup4 lxml
+
+      - name: Run ${{ matrix.airfoil }} through the full pipeline
+        run: python scripts/ci_run_airfoil.py ${{ matrix.airfoil }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: result-${{ matrix.airfoil }}
+          path: ci_results/${{ matrix.airfoil }}.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h5-${{ matrix.airfoil }}
+          path: .orchestrator_runs/ci_matrix/${{ matrix.airfoil }}/airfoil_${{ matrix.airfoil }}.h5
+          retention-days: 14
+          if-no-files-found: ignore
