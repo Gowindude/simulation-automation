@@ -103,6 +103,7 @@ def split_by_airfoil(records: list[dict], val_fraction: float = 0.2, seed: int =
 
 def split_train_val_test(
     records: list[dict], val_fraction: float = 0.15, test_fraction: float = 0.15, seed: int = 0,
+    fixed_test_names: set[str] | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """Three-way holdout split by whole airfoil.
 
@@ -113,7 +114,31 @@ def split_train_val_test(
     (the previous single-split setup) lets the "best" checkpoint be
     implicitly chosen to look good on the same set used to report
     "how good is the model," which is optimistic, not a held-out result.
+
+    fixed_test_names, if given, pins the test set to those exact airfoil
+    names (present in `records`) instead of drawing test randomly by
+    `rng.permutation(len(records))`. Without this, re-splitting a
+    differently-sized/differently-composed corpus each retrain draws a
+    *different* random set of test airfoils every time (seed=0 seeds the
+    permutation, not the airfoil identities) -- real symptom hit
+    2026-09-16: test_rmse_cp swung 0.449 -> 0.524 -> 0.566 across three
+    same-night retrains even as val_loss improved monotonically, purely
+    from which airfoils happened to land in each cycle's random test
+    draw. Passing the same fixed_test_names across corpora of any size
+    makes test_rmse_cp directly comparable retrain to retrain.
     """
+    if fixed_test_names is not None:
+        test = [r for r in records if r["name"] in fixed_test_names]
+        remainder = [r for r in records if r["name"] not in fixed_test_names]
+        rng = np.random.default_rng(seed)
+        order = rng.permutation(len(remainder))
+        n_val = max(1, int(round(len(remainder) * val_fraction / (1 - test_fraction))))
+        val_idx = order[:n_val]
+        train_idx = order[n_val:]
+        train = [remainder[i] for i in train_idx]
+        val = [remainder[i] for i in val_idx]
+        return train, val, test
+
     rng = np.random.default_rng(seed)
     order = rng.permutation(len(records))
     n = len(records)

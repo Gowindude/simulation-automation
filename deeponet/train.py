@@ -35,14 +35,26 @@ def _to_loader(branch, trunk, targets, batch_size, shuffle):
     return DataLoader(ds, batch_size=batch_size, shuffle=shuffle)
 
 
+FIXED_TEST_AIRFOILS_PATH = os.path.join(os.path.dirname(__file__), "fixed_test_airfoils.json")
+
+
 def train(
     h5_dir, epochs=300, batch_size=256, lr=1e-3,
     val_fraction=0.15, test_fraction=0.15, seed=0, out_dir="deeponet/checkpoints",
 ):
     os.makedirs(out_dir, exist_ok=True)
     records = load_airfoil_records(h5_dir)
+
+    fixed_test_names = None
+    if os.path.exists(FIXED_TEST_AIRFOILS_PATH):
+        with open(FIXED_TEST_AIRFOILS_PATH) as f:
+            fixed_test_names = set(json.load(f))
+        print(f"Using fixed test set ({len(fixed_test_names)} airfoils) from {FIXED_TEST_AIRFOILS_PATH} "
+              "-- test_rmse_cp is directly comparable across retrains.")
+
     train_records, val_records, test_records = split_train_val_test(
         records, val_fraction=val_fraction, test_fraction=test_fraction, seed=seed,
+        fixed_test_names=fixed_test_names,
     )
     print(
         f"{len(records)} airfoils total -- {len(train_records)} train / "
