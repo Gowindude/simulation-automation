@@ -1,0 +1,71 @@
+# Locked target: 256 additional real UIUC airfoils not yet run through
+# the pipeline (batch 4 -- extends batch 3's coverage further into the
+# ~1275-shape UIUC pool still untapped after batches 1-3). Same
+# install/cache/upload approach, verified working in batches 1-3.
+name: Airfoil corpus matrix run (UIUC batch 4)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  run-airfoil:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        airfoil: ["e664ex", "e668", "e67", "e678", "e68", "e682", "e694", "e71", "e715", "e748", "e793", "e817", "e818", "e836", "e837", "e838", "e850", "e851", "e852", "e853", "e854", "e855", "e856", "e857", "e858", "e862", "e863", "e864", "e874", "e904", "e908", "ea61009", "ea61012", "ea81006", "ebambino7", "ec863914", "eh0009", "eh1070", "eh1090", "eh1590", "eh2010", "eh2012", "eh2070", "eh2510", "eh3012", "eiffel10", "eiffel371", "eiffel385", "eiffel428", "eiffel430", "esa40", "falcon", "fauvel", "fg1", "fg2", "fg3", "fg4", "fx049915", "fx05188", "fx05191", "fx057816", "fx05h126", "fx082512", "fx08s176", "fx2", "fx3", "fx38153", "fx601001", "fx60100sm", "fx601261", "fx60157", "fx60160", "fx60177", "fx61140", "fx61147", "fx61163", "fx61168", "fx61184", "fx62k131", "fx62k153", "fx63100", "fx63110", "fx63120", "fx63137sm", "fx63143", "fx63145", "fx63147", "fx63158", "fx6617a2", "fx6617ai", "fx66182", "fx66196v", "fx66a175", "fx66h60", "fx66h80", "fx66s161", "fx66s171", "fx66s196", "fx67k150", "fx67k170", "fx68h120", "fx69274", "fx69h083", "fx69h098", "fx69pr281", "fx71089a", "fx71120", "fx711520", "fx711525", "fx711530", "fx71l150", "fx72150a", "fx72150b", "fx72ls160", "fx73170", "fx73cl1152", "fx73cl2152", "fx73cl3152", "fx73k170", "fx74080", "fx74130wp1", "fx74130wp2", "fx74130wp2mod", "fx74cl5140", "fx74cl6140", "fx74modsm", "fx75141", "fx75193", "fx75vg166", "fx76100", "fx76120", "fx76mp120", "fx76mp140", "fx76mp160", "fx77080", "fx77w121", "fx77w153", "fx77w258", "fx77w270", "fx77w270s", "fx77w343", "fx78k140", "fx78k140a20", "fx78k150", "fx78k161", "fx78pk188", "fx79k144", "fx79l100", "fx79l120", "fx79w151a", "fx79w470a", "fx79w660a", "fx80080", "fx83w108", "fx83w160", "fx83w227", "fx84w097", "fx84w127", "fx84w140", "fx84w150", "fx84w175", "fx84w218", "fxl142k", "fxlv152", "fxm2", "fxs02196", "fxs03182", "fxs21158", "geminism", "giiia", "giiib", "giiic", "giiid", "giiie", "giiif", "giiig", "giiih", "giiii", "giiij", "giiik", "giiil", "giiim", "giiin", "glennmartin2", "glennmartin3", "glennmartin4", "gm15sm", "goe05k", "goe06k", "goe07k", "goe08k", "goe09k", "goe100", "goe101", "goe10k", "goe113", "goe114", "goe115", "goe116", "goe117", "goe118", "goe11k", "goe121", "goe122", "goe123", "goe124", "goe12k", "goe133", "goe134", "goe137", "goe13k", "goe14", "goe140", "goe142", "goe143", "goe144", "goe147", "goe14k", "goe15", "goe155", "goe15k", "goe164", "goe165", "goe167", "goe16k", "goe173", "goe174", "goe176", "goe177", "goe178", "goe180", "goe182", "goe184", "goe187", "goe188", "goe190", "goe195", "goe198", "goe199", "goe207", "goe210", "goe217", "goe222", "goe223", "goe225", "goe226", "goe227", "goe228", "goe229", "goe233", "goe234", "goe235", "goe238", "goe239", "goe240", "goe241"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache apt archives (OpenFOAM/CalculiX/xfoil .deb downloads)
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-openfoam12-calculix-xfoil-jammy-v1
+
+      - name: Install system dependencies (OpenFOAM 12, CalculiX, xfoil, gmsh headless libs)
+        run: |
+          set -e
+          sudo add-apt-repository -y universe
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg
+          wget -q -O - https://dl.openfoam.org/gpg.key | sudo tee /etc/apt/trusted.gpg.d/openfoam.asc > /dev/null
+          echo "deb http://dl.openfoam.org/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/openfoam.list
+          sudo apt-get update
+          sudo apt-get install -y openfoam12 calculix-ccx xfoil             libglu1-mesa libxrender1 libxcursor1 libxft2 libxinerama1
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-airfoil-pipeline-deps-v1
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy scipy gmsh h5py pyvista requests beautifulsoup4 lxml
+
+      - name: Run ${{ matrix.airfoil }} through the full pipeline
+        run: python scripts/ci_run_airfoil.py ${{ matrix.airfoil }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: result-${{ matrix.airfoil }}
+          path: ci_results/${{ matrix.airfoil }}.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h5-${{ matrix.airfoil }}
+          path: .orchestrator_runs/ci_matrix/${{ matrix.airfoil }}/airfoil_${{ matrix.airfoil }}.h5
+          retention-days: 14
+          if-no-files-found: ignore
