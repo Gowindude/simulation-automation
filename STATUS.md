@@ -1458,3 +1458,66 @@ issue with a fixed cross-cycle holdout set; investigate the `e817`
 outlier; decide whether to keep `deeponet/train.py --out-dir` (added
 tonight, small/safe) as a documented CLI option or fold the old-127
 comparison checkpoint into a permanent regression baseline.
+
+## Session 2026-09-17/18: fixed test set, batch 4, warm-start, an honest negative result
+
+Picked up the "not yet done" items above.
+
+**Fixed the test-set-instability issue for real.**
+`deeponet/dataset.py::split_train_val_test` now accepts
+`fixed_test_names`; `deeponet/train.py` auto-loads
+`deeponet/fixed_test_airfoils.json` (the 684-corpus model's 103 test
+airfoils, locked in) when present, so every future retrain scores
+against the *same* held-out airfoils regardless of corpus size --
+`test_rmse_cp` is now directly comparable cycle to cycle. Re-ran the
+684-airfoil corpus with this fixed split as a clean baseline:
+**test_rmse_cp = 0.518** (best val_loss 0.344 at epoch 101) -- this,
+not the earlier 0.566, is the real number to compare future retrains
+against.
+
+**Batch 4** (256 more UIUC airfoils, the next slice of the ~1275-shape
+pool still untapped after batches 1-3): dispatched, completed clean
+(256/256 success, zero failures -- first batch all night with no
+timeouts). Merged with the existing 690-airfoil pool -> 930 unique
+airfoils in `.orchestrator_runs/corpus_merged_4`.
+
+**Added `deeponet/train.py --resume-from`**: warm-starts from an
+existing `.pt` state_dict instead of always random-initializing, to
+stop throwing away all prior epochs every time a background retrain
+gets killed by the harness's low-memory protection (an environmental,
+recurring issue all week -- not a code bug; verify+kill any orphaned
+PID after a "killed" task notification, a tracked-task stop does not
+reliably kill the real child process).
+
+**Real mistake made and worth flagging**: the clean 684-corpus fixed-
+test baseline and the subsequent 930-corpus retrain both used
+`--out-dir deeponet/checkpoints` (the deployed path) -- the second run
+overwrote the first's saved weights before a planned "redo the warm-
+start with a different LR" experiment could reuse the clean 684
+snapshot. The *number* (0.518) survived (recorded above), but the
+exact weight file didn't; reproducing it means a ~50min retrain, not a
+file copy. **Going forward: always give a new checkpoint dir when the
+whole point of the run is to compare against what's already deployed.**
+
+**930-airfoil retrain, warm-started from the 684-corpus baseline,
+scored against the identical fixed test set: test_rmse_cp = 0.541** --
+genuinely worse than the 684-corpus's 0.518, and this time it's a real
+comparison (same held-out airfoils both runs), not a test-set-sampling
+artifact. Best val_loss landed very early (epoch 10 of 150) then
+drifted for the rest of the run without ever improving further --
+consistent with the warm-start's implicit learning-rate schedule being
+poorly suited to fine-tuning (no LR decay, model already close to a
+minimum). **Tested the obvious fix (lower LR, 1e-4 instead of 1e-3) --
+it made things worse, not better** (test_rmse_cp 0.556, best val_loss
+even earlier at epoch 2) -- hypothesis disproven, not adopted, not
+deployed (that checkpoint was deleted). The straightforward read: the
+934-airfoil corpus's batch-4 addition is genuinely harder on average
+for this fixed test set, not a training-methodology artifact -- worth
+investigating which specific batch-4 airfoils are driving it (same
+kind of outlier-hunting as `e817` above) before assuming more data is
+always better for this architecture/data regime.
+
+**Deployed right now**: the 930-airfoil, test_rmse_cp=0.541 checkpoint,
+on both dashboards. It is the most complete corpus and the model
+whose val_loss actually reflects the best fit found -- deployed on
+that basis, with the RMSE regression noted honestly rather than hidden.
