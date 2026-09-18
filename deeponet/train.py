@@ -41,6 +41,7 @@ FIXED_TEST_AIRFOILS_PATH = os.path.join(os.path.dirname(__file__), "fixed_test_a
 def train(
     h5_dir, epochs=300, batch_size=256, lr=1e-3,
     val_fraction=0.15, test_fraction=0.15, seed=0, out_dir="deeponet/checkpoints",
+    resume_from=None,
 ):
     os.makedirs(out_dir, exist_ok=True)
     records = load_airfoil_records(h5_dir)
@@ -69,6 +70,19 @@ def train(
     train_loader = _to_loader(branch_tr, trunk_tr, y_tr, batch_size, shuffle=True)
 
     model = DeepONet(branch_in_dim=branch_tr.shape[1])
+    if resume_from:
+        if os.path.exists(resume_from):
+            state = torch.load(resume_from, map_location="cpu")
+            try:
+                model.load_state_dict(state)
+                print(f"Resumed weights from {resume_from} -- warm start, not training from scratch.")
+            except RuntimeError as e:
+                # branch_in_dim mismatch (different geometry resampling or
+                # a differently-shaped corpus) -- fall back to random init
+                # rather than crash a long training run over a shape diff.
+                print(f"Could not resume from {resume_from} ({e}) -- starting from scratch instead.")
+        else:
+            print(f"--resume-from {resume_from} not found -- starting from scratch.")
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = torch.nn.MSELoss()
 
@@ -196,9 +210,14 @@ if __name__ == "__main__":
     parser.add_argument("--val-fraction", type=float, default=0.15)
     parser.add_argument("--test-fraction", type=float, default=0.15)
     parser.add_argument("--out-dir", default="deeponet/checkpoints")
+    parser.add_argument(
+        "--resume-from", default=None,
+        help="Path to a .pt state_dict to warm-start from (e.g. deeponet/checkpoints/deeponet_cp_final_epoch.pt) "
+             "instead of random init -- useful after an interrupted run so restarting doesn't waste the earlier epochs.",
+    )
     args = parser.parse_args()
     train(
         args.h5_dir, epochs=args.epochs, batch_size=args.batch_size, lr=args.lr,
         val_fraction=args.val_fraction, test_fraction=args.test_fraction,
-        out_dir=args.out_dir,
+        out_dir=args.out_dir, resume_from=args.resume_from,
     )
